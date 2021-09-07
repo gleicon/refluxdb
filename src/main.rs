@@ -21,17 +21,12 @@ impl Server {
         } = self;
 
         loop {
-            // First we check to see if there's a message we need to echo back.
-            // If so then we try to send it back to the original source, waiting
-            // until it's writable and we're able to do so.
             if let Some((size, peer)) = to_send {
                 let amt = socket.send_to(&buf[..size], &peer).await?;
 
-                println!("Echoed {}/{} bytes to {}", amt, size, peer);
+                println!("Echoed {}/{} bytes to {} - {:?}", amt, size, peer, String::from_utf8_lossy(&buf[..size-1]));
             }
 
-            // If we're here then `to_send` is `None`, so we take a look for the
-            // next message we're going to echo back.
             to_send = Some(socket.recv_from(&mut buf).await?);
         }
     }
