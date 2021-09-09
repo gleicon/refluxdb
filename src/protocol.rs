@@ -47,7 +47,7 @@ impl LineProtocol {
         let mut buf = format!("{}", self.measurement_name);
         if !self.tag_set.is_empty() {
             for (k, v) in self.tag_set.iter() {
-                buf += &format!(",{}:{}", k, v);
+                buf += &format!(",{}={}", k, v);
             }
         }
 
@@ -63,7 +63,7 @@ impl LineProtocol {
             } else {
                 buf +=" "
             }
-            buf += &format!("{}:{}", k, v);
+            buf += &format!("{}={}", k, v);
             count+=1;
         }
 
@@ -140,8 +140,48 @@ impl LineProtocol {
             }
 
         }
-        //print!("{}", format!("{:#?}", proto));
         Ok(proto)
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn single_tag(){
+        let tst = "mySingleTagMeasurement,tag1=value1 fieldKey1=\"fieldValue\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+
+        assert_eq!(tst.clone(), out);
+
+    }
+    #[test]
+    fn multiple_tags() {
+        let tst = "myMultipleTagMeasurement,tag1=value1,tag2=value2 fieldKey=\"fieldValue\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+
+        assert_eq!(tst.clone(), out);
+    }
+
+    #[test]
+    fn single_fieldvalue(){
+        let tst = "mySingleFieldKey fieldKey=\"fieldValue\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+
+        assert_eq!(tst.clone(), out);
+    }
+
+    #[test]
+    fn multiple_fieldvalues(){
+        let tst = "myMultipleFieldKey fieldKey1=\"fieldValue\",fieldKey2=\"oi\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+
+        assert_eq!(tst.clone(), out);
     }
 
 }
