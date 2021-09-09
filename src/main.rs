@@ -5,6 +5,7 @@ use tokio::net::UdpSocket;
 
 // cargo run
 // nc -u 127.0.0.1 8089
+mod protocol;
 
 struct Server {
     socket: UdpSocket,
@@ -41,6 +42,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let socket = UdpSocket::bind(&addr).await?;
     println!("Listening on: {}", socket.local_addr()?);
 
+    let res = protocol::LineProtocol::parse("myMeasurement,tag1=value1,tag2=value2 fieldKey=\"fieldValue\" 1556813561098000000".to_string());
+    let res2 = protocol::LineProtocol::parse("myMeasurement2 fieldKey=\"fieldValue\" 1556813561098000000".to_string());
+
+    match res {
+         Ok(p) => print!("{:#?}\n", p.serialize().unwrap()),
+         Err(e) => print!("Error: {:?}", e)
+    }
+
+    match res2 {
+        Ok(p) => print!("{:#?}\n", p.serialize().unwrap()),
+        Err(e) => print!("Error: {:?}", e)
+   }
+    
     let server = Server {
         socket,
         buf: vec![0; 1024],
