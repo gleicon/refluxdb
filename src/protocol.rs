@@ -1,11 +1,13 @@
 use chrono::{Local};
 use std::collections::HashMap;
+use indexmap::IndexMap;
+
 
 #[derive(Debug)]
 pub struct LineProtocol {
     measurement_name: String,
-    tag_set: HashMap<String, String>,
-    field_set: HashMap<String, String>,
+    tag_set: IndexMap<String, String>,
+    field_set: IndexMap<String, String>,
     timestamp: i64,
 }
 
@@ -13,8 +15,8 @@ impl Default for LineProtocol {
     fn default () -> LineProtocol {
         LineProtocol{
             measurement_name: "_".to_string(), 
-            tag_set: HashMap::new(),
-            field_set: HashMap::new(),
+            tag_set: IndexMap::new(),
+            field_set: IndexMap::new(),
             timestamp: Local::now().timestamp(),
         }
     }
@@ -24,8 +26,8 @@ impl LineProtocol {
     pub fn new(measurement_name:  String) -> Self {
         let s = Self {
             measurement_name: measurement_name, 
-            tag_set: HashMap::new(),
-            field_set: HashMap::new(),
+            tag_set: IndexMap::new(),
+            field_set: IndexMap::new(),
             timestamp: Local::now().timestamp(),
         };
         return s
