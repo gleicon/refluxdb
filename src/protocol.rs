@@ -135,8 +135,11 @@ impl LineProtocol {
         // timestamp
         match s.next() {
             Some(ts) => {
-                proto.timestamp = ts.parse::<i64>().unwrap();
-            },
+                proto.timestamp = match ts.parse::<i64>(){
+                    Ok(a)=> a,
+                    Err(e) => return Err(format!("Error: invalid timestamp: {} - line: {:?}", e, line)),
+                };
+                       },
             None => {
                 return Err(format!("Error: no timestamp - line: {:?}", line));
             }
