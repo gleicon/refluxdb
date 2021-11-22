@@ -1,3 +1,4 @@
+use log::info;
 use std::io;
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
@@ -46,7 +47,7 @@ impl UDPRefluxServer {
     }
     pub async fn new(addr: String) -> Self {
         let socket = UdpSocket::bind(&addr).await.unwrap();
-        println!("Listening on: {}", socket.local_addr().unwrap());
+        info!("Listening on UDP: {}", socket.local_addr().unwrap());
 
         let s = Self {
             socket,

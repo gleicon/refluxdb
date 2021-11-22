@@ -1,5 +1,5 @@
-use actix::spawn;
-use actix_web::{middleware, web, App, HttpServer};
+use actix_web::{middleware, App, HttpServer};
+use log::info;
 use std::env;
 
 // cargo run
@@ -14,7 +14,11 @@ mod udpserver;
 // TODO: use hyper for http in the main thread, udp in a service thread.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    pretty_env_logger::init();
+    std::env::set_var(
+        "RUST_LOG",
+        "actix_web=debug,actix_server=debug,refluxdb=info",
+    );
+    env_logger::init();
 
     let addr = env::args()
         .nth(1)
@@ -23,18 +27,16 @@ async fn main() -> std::io::Result<()> {
 
     // spawns and wait for the UDPServer
     let _task = actix::spawn(async {
-        print!("Listening to udp\n");
         let server = udpserver::UDPRefluxServer::new(addr);
         let mut srv = server.await;
         srv.run().await.unwrap();
-        print!("Listening to udp\n");
     });
 
-    print!("Listening to http\n");
+    info!("Listening to http");
     HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
-            //            .app_data(data.clone())
+            .app_data(pm.clone())
             .service(handlers::write_timeseries)
             .service(handlers::query_timeseries)
             .service(handlers::list_timeseries)
