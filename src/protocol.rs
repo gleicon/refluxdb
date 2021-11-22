@@ -1,7 +1,5 @@
-use chrono::{Local};
-use std::collections::HashMap;
+use chrono::Local;
 use indexmap::IndexMap;
-
 
 #[derive(Debug)]
 pub struct LineProtocol {
@@ -12,9 +10,9 @@ pub struct LineProtocol {
 }
 
 impl Default for LineProtocol {
-    fn default () -> LineProtocol {
-        LineProtocol{
-            measurement_name: "_".to_string(), 
+    fn default() -> LineProtocol {
+        LineProtocol {
+            measurement_name: "_".to_string(),
             tag_set: IndexMap::new(),
             field_set: IndexMap::new(),
             timestamp: Local::now().timestamp(),
@@ -23,23 +21,23 @@ impl Default for LineProtocol {
 }
 
 impl LineProtocol {
-    pub fn new(measurement_name:  String) -> Self {
+    pub fn new(measurement_name: String) -> Self {
         let s = Self {
-            measurement_name: measurement_name, 
+            measurement_name: measurement_name,
             tag_set: IndexMap::new(),
             field_set: IndexMap::new(),
             timestamp: Local::now().timestamp(),
         };
-        return s
+        return s;
     }
 
-    pub fn tag(&mut self, key: String, value: String){
+    pub fn tag(&mut self, key: String, value: String) {
         if key.len() > 0 && value.len() > 0 {
             self.tag_set.insert(key, value);
         }
     }
 
-    pub fn field(&mut self, key: String, value: String){
+    pub fn field(&mut self, key: String, value: String) {
         if key.len() > 0 && value.len() > 0 {
             self.field_set.insert(key, value);
         }
@@ -54,24 +52,23 @@ impl LineProtocol {
         }
 
         if self.field_set.is_empty() {
-            return Err("No FieldKey set".to_string())
+            return Err("No FieldKey set".to_string());
         }
 
         let mut count = 0;
 
         for (k, v) in self.field_set.iter() {
             if count > 0 {
-                buf +=","
+                buf += ","
             } else {
-                buf +=" "
+                buf += " "
             }
             buf += &format!("{}={}", k, v);
-            count+=1;
+            count += 1;
         }
 
         buf += &format!(" {}", self.timestamp);
         Ok(buf)
-
     }
 
     // https://docs.influxdata.com/influxdb/v2.0/reference/syntax/line-protocol/
@@ -83,30 +80,27 @@ impl LineProtocol {
             return Err("Error: Empty string".to_string());
         }
 
-
         let mut proto = LineProtocol::default();
 
         let mut s = line.split_whitespace();
         // measurement name and tags
         match s.next() {
-            Some(mn)=> {
-
+            Some(mn) => {
                 let tags = Box::new(match mn.find(",") {
-                    Some(_) => { 
+                    Some(_) => {
                         let tt = mn.split(",").collect::<Vec<&str>>();
                         tt
-                    },
+                    }
                     None => vec![mn],
-                  });
+                });
                 proto.measurement_name = tags[0].to_string();
                 for tag in tags[1..].iter() {
                     match tag.split_once("=") {
-                        Some((k,v)) => proto.tag(k.to_string(), v.to_string()),
+                        Some((k, v)) => proto.tag(k.to_string(), v.to_string()),
                         None => (),
                     }
                 }
-                
-            },
+            }
             None => {
                 return Err(format!("Error: broken protocol line: {:?}", line));
             }
@@ -115,19 +109,19 @@ impl LineProtocol {
         match s.next() {
             Some(fk) => {
                 let fkeys = Box::new(match fk.find(",") {
-                    Some(_) => { 
+                    Some(_) => {
                         let tt = fk.split(",").collect::<Vec<&str>>();
-                        tt//[1..]
-                    },
+                        tt //[1..]
+                    }
                     None => vec![fk],
-                  });
+                });
                 for fk in fkeys.iter() {
                     match fk.split_once("=") {
-                        Some((k,v)) => proto.field(k.to_string(), v.to_string()),
+                        Some((k, v)) => proto.field(k.to_string(), v.to_string()),
                         None => (),
                     }
                 }
-            },
+            }
             None => {
                 return Err(format!("Error: no fieldkey - line: {:?}", line));
             }
@@ -135,32 +129,35 @@ impl LineProtocol {
         // timestamp
         match s.next() {
             Some(ts) => {
-                proto.timestamp = match ts.parse::<i64>(){
-                    Ok(a)=> a,
-                    Err(e) => return Err(format!("Error: invalid timestamp: {} - line: {:?}", e, line)),
+                proto.timestamp = match ts.parse::<i64>() {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return Err(format!(
+                            "Error: invalid timestamp: {} - line: {:?}",
+                            e, line
+                        ))
+                    }
                 };
-                       },
+            }
             None => {
                 return Err(format!("Error: no timestamp - line: {:?}", line));
             }
-
         }
         Ok(proto)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
 
     #[test]
-    fn single_tag(){
-        let tst = "mySingleTagMeasurement,tag1=value1 fieldKey1=\"fieldValue\" 1556813561098000000".to_string();
+    fn single_tag() {
+        let tst = "mySingleTagMeasurement,tag1=value1 fieldKey1=\"fieldValue\" 1556813561098000000"
+            .to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
 
         assert_eq!(tst.clone(), out);
-
     }
     #[test]
     fn multiple_tags() {
@@ -172,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn single_fieldvalue(){
+    fn single_fieldvalue() {
         let tst = "mySingleFieldKey fieldKey=\"fieldValue\" 1556813561098000000".to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
@@ -181,12 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn multiple_fieldvalues(){
-        let tst = "myMultipleFieldKey fieldKey1=\"fieldValue\",fieldKey2=\"oi\" 1556813561098000000".to_string();
+    fn multiple_fieldvalues() {
+        let tst =
+            "myMultipleFieldKey fieldKey1=\"fieldValue\",fieldKey2=\"oi\" 1556813561098000000"
+                .to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
 
         assert_eq!(tst.clone(), out);
     }
-
 }

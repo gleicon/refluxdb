@@ -43,9 +43,11 @@ pub struct TimestampEnvelope {
     pub id: Vec<u8>,
     pub value: Vec<u8>,
     pub created_at: i64,
+    pub tags: HashMap<String, String>,
 }
 
 impl TimeseriesDiskPersistenceManager {
+    // TODO: implement tags
     pub fn save_element(
         &mut self,
         timeseries_name: String,
@@ -71,6 +73,7 @@ impl TimeseriesDiskPersistenceManager {
             id: autoid.as_bytes().to_vec(),
             value: body.clone(),
             created_at: dt.timestamp_millis(),
+            tags: HashMap::new(),
         };
 
         let encoded: Vec<u8> = bincode::serialize(&ev).unwrap();
@@ -174,14 +177,6 @@ impl TimeseriesDiskPersistenceManager {
         }
     }
 
-    pub fn setup(&mut self) {
-        if !Path::new(&self.root_path).exists() {
-            fs::create_dir_all(&self.root_path).unwrap();
-        }
-
-        self.load_persistence();
-    }
-
     fn load_persistence(&mut self) {
         let dir = &self.path;
         if dir.is_dir() {
@@ -193,6 +188,14 @@ impl TimeseriesDiskPersistenceManager {
                 };
             }
         }
+    }
+
+    pub fn setup(&mut self) {
+        if !Path::new(&self.root_path).exists() {
+            fs::create_dir_all(&self.root_path).unwrap();
+        }
+
+        self.load_persistence();
     }
 
     pub fn new(basepath: String) -> Self {
