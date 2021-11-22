@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 //  one sled database per timeseries, all within a root directory
 //      pros: isolation, parallelism
 //      cons: disk space, migration
-// immutable structure
+// immutable structure, measurements can't be changed
 // interface:
 //  key -> unix timestamp, ordered
 //  value -> envelope with:
@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 // TODO: on key change: watch_prefix per table w/ watcher registration
 // TODO: stats: disk space, queue number, queue sizes
 // TODO: LRU tables (expire/delete old messages)
+// TODO: ensure immutability is enforced through measurement id or fingerprint
 
 // #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 // struct Envelope {
@@ -48,7 +49,7 @@ pub struct TimestampEnvelope {
 
 impl TimeseriesDiskPersistenceManager {
     // TODO: implement tags
-    pub fn save_element(
+    pub fn save_measurement(
         &mut self,
         timeseries_name: String,
         body: Vec<u8>,
@@ -80,14 +81,14 @@ impl TimeseriesDiskPersistenceManager {
         let res = db.insert(key.clone(), encoded.clone());
 
         match res {
-            Ok(Some(b)) => Err(format!("Error - element already exists {:?}", b)),
+            Ok(Some(b)) => Err(format!("Error - measurement already exists {:?}", b)),
             Ok(None) => Ok(ev),
             Err(e) => Err(format!("Error persisting message: {}", e)),
         }
     }
 
     // TODO: that should die, the table should be immutable (no pop or update)
-    pub fn pop_newest_element(
+    pub fn pop_newest_measurement(
         &mut self,
         timeseries_name: String,
     ) -> Result<TimestampEnvelope, String> {
@@ -111,7 +112,7 @@ impl TimeseriesDiskPersistenceManager {
         }
     }
 
-    pub fn get_element(
+    pub fn get_measurement(
         &mut self,
         timeseries_name: String,
         key: String,
@@ -135,7 +136,7 @@ impl TimeseriesDiskPersistenceManager {
         }
     }
 
-    pub fn get_element_range(
+    pub fn get_measurement_range(
         &mut self,
         timeseries_name: String,
         start_key: String,
