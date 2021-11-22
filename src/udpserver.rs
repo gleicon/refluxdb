@@ -7,6 +7,7 @@ pub struct UDPRefluxServer {
     pub socket: UdpSocket,
     buf: Vec<u8>,
     to_send: Option<(usize, SocketAddr)>,
+    pm: crate::persistence::TimeseriesDiskPersistenceManager,
 }
 
 impl UDPRefluxServer {
@@ -45,7 +46,10 @@ impl UDPRefluxServer {
             self.to_send = Some(self.socket.recv_from(&mut self.buf).await?);
         }
     }
-    pub async fn new(addr: String) -> Self {
+    pub async fn new(
+        addr: String,
+        pm: crate::persistence::TimeseriesDiskPersistenceManager,
+    ) -> Self {
         let socket = UdpSocket::bind(&addr).await.unwrap();
         info!("Listening on UDP: {}", socket.local_addr().unwrap());
 
@@ -53,6 +57,7 @@ impl UDPRefluxServer {
             socket,
             buf: vec![0; 1024],
             to_send: None,
+            pm: pm,
         };
 
         return s;

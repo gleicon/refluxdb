@@ -24,10 +24,10 @@ async fn main() -> std::io::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8089".to_string());
     let pm = persistence::TimeseriesDiskPersistenceManager::new("databases".to_string());
-
+    let pmc = pm.clone();
     // spawns and wait for the UDPServer
     let _task = actix::spawn(async {
-        let server = udpserver::UDPRefluxServer::new(addr);
+        let server = udpserver::UDPRefluxServer::new(addr, pmc);
         let mut srv = server.await;
         srv.run().await.unwrap();
     });
