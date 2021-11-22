@@ -5,6 +5,7 @@ use tokio::net::UdpSocket;
 
 // cargo run
 // nc -u 127.0.0.1 8089
+mod persistence;
 mod protocol;
 
 struct Server {
@@ -23,18 +24,32 @@ impl Server {
 
         loop {
             if let Some((size, peer)) = to_send {
-                match protocol::LineProtocol::parse(String::from_utf8_lossy(&buf[..size-1]).to_string()) {
+                match protocol::LineProtocol::parse(
+                    String::from_utf8_lossy(&buf[..size - 1]).to_string(),
+                ) {
                     Ok(b) => {
-                        let amt = socket.send_to(b.serialize().unwrap().as_bytes(), &peer).await?;                  
-                        println!("Echoed {}/{} bytes to {} - {:?}", amt, size, peer, String::from_utf8_lossy(&buf[..size-1]));
-                    },
+                        let amt = socket
+                            .send_to(b.serialize().unwrap().as_bytes(), &peer)
+                            .await?;
+                        println!(
+                            "Echoed {}/{} bytes to {} - {:?}",
+                            amt,
+                            size,
+                            peer,
+                            String::from_utf8_lossy(&buf[..size - 1])
+                        );
+                    }
                     Err(e) => {
-                        let amt = socket.send_to(e.as_bytes(), &peer).await?;                  
-                        println!("Error: {}/{} bytes to {} - {}", amt, size, peer, e.to_string());
-                    
+                        let amt = socket.send_to(e.as_bytes(), &peer).await?;
+                        println!(
+                            "Error: {}/{} bytes to {} - {}",
+                            amt,
+                            size,
+                            peer,
+                            e.to_string()
+                        );
                     }
                 }
-              
             }
 
             to_send = Some(socket.recv_from(&mut buf).await?);
