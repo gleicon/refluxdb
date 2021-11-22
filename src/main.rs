@@ -1,28 +1,19 @@
-use std::convert::Infallible;
+use actix::spawn;
+use actix_web::{middleware, web, App, HttpServer};
 use std::env;
-use std::error::Error;
-use tokio::net::UdpSocket;
-use tokio::task;
-
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server};
 
 // cargo run
 // nc -u 127.0.0.1 8089
+mod handlers;
 mod persistence;
 mod protocol;
 mod udpserver;
 
-async fn hello(_: Request<Body>) -> Result<Response<Body>, Infallible> {
-    Ok(Response::new(Body::from("Hello World!")))
-}
-
 // TODO: http query interface + UDP write interface
 // TODO GlueSQL query engine
 // TODO: use hyper for http in the main thread, udp in a service thread.
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
     pretty_env_logger::init();
 
     let addr = env::args()
@@ -31,19 +22,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pm = persistence::TimeseriesDiskPersistenceManager::new("databases".to_string());
 
     // spawns and wait for the UDPServer
-    tokio::spawn(async {
+    let _task = actix::spawn(async {
+        print!("Listening to udp\n");
         let server = udpserver::UDPRefluxServer::new(addr);
         let mut srv = server.await;
         srv.run().await.unwrap();
+        print!("Listening to udp\n");
     });
 
-    let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(hello)) });
-    let addr = ([127, 0, 0, 1], 8081).into();
-    let server = Server::bind(&addr).serve(make_svc);
-
-    println!("Listening on http://{}", addr);
-
-    server.await?;
-
-    Ok(())
+    print!("Listening to http\n");
+    HttpServer::new(move || {
+        App::new()
+            .wrap(middleware::Logger::default())
+            //            .app_data(data.clone())
+            .service(handlers::write_timeseries)
+            .service(handlers::query_timeseries)
+            .service(handlers::list_timeseries)
+    })
+    .bind("127.0.0.1:8081")?
+    .run()
+    .await
 }
