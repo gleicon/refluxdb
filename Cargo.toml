@@ -6,7 +6,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = { version = "4.0.0-beta.8" }
+actix-web = { version = "4.0.0-beta.12" }
 tokio = { version = "1.8.1", features = ["process", "sync", "rt", "signal"] }
 futures = "0.3.15"
 log = "0.4.0"
