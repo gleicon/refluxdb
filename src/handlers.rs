@@ -4,11 +4,14 @@ use std::sync::Mutex;
 
 #[get("/")]
 async fn list_timeseries(
-    pm: web::Data<crate::persistence::TimeseriesDiskPersistenceManager>,
+    pm: web::Data<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
 ) -> Result<HttpResponse, Error> {
     return Ok(HttpResponse::Ok()
         .content_type("application/json")
-        .body("all ts"));
+        .json(format!(
+            "{:?}",
+            pm.lock().unwrap().clone().list_timeseries().unwrap()
+        )));
 }
 
 #[post("/query")]
@@ -38,7 +41,7 @@ async fn query_timeseries(
 /*
  * curl -i -XPOST 'http://localhost:8086/api/v2/write?bucket=db/rp&precision=ns' \
   --header 'Authorization: Token username:password' \
-  --data-raw 'cpu_load_short,host=server01,region=us-west value=0.64 1434055562000000000'
+  --data-raw 'cpu_load,host=server,region=us-east1 value=0.80 1234567890000000000'
 */
 #[post("/write")]
 async fn write_timeseries(
@@ -47,6 +50,7 @@ async fn write_timeseries(
 ) -> Result<HttpResponse, Error> {
     match crate::protocol::LineProtocol::parse(req_body.clone()) {
         Ok(b) => {
+            // persist
             return Ok(HttpResponse::Ok()
                 .content_type("application/json")
                 .json(format!("{:?}", b)));
@@ -54,7 +58,7 @@ async fn write_timeseries(
         Err(e) => {
             return Ok(HttpResponse::BadRequest()
                 .content_type("application/json")
-                .body(format!("{}", e)));
+                .json(format!("{}", e)));
         }
     }
 }

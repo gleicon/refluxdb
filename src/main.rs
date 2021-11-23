@@ -44,7 +44,7 @@ async fn main() -> std::io::Result<()> {
             .service(handlers::query_timeseries)
             .service(handlers::list_timeseries)
     })
-    .bind("127.0.0.1:8081")?
+    .bind("127.0.0.1:8086")?
     .run()
     .await
 }

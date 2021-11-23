@@ -48,6 +48,11 @@ pub struct TimestampEnvelope {
 }
 
 impl TimeseriesDiskPersistenceManager {
+    pub fn list_timeseries(self) -> Result<Vec<String>, String> {
+        let databases: Vec<String> = self.databases.iter().map(|(db, _)| db.clone()).collect();
+        return Ok(databases);
+    }
+
     // TODO: implement tags
     pub fn save_measurement(
         &mut self,
