@@ -25,15 +25,15 @@ async fn main() -> std::io::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8089".to_string());
     let pm = persistence::TimeseriesDiskPersistenceManager::new("databases".to_string());
-    let data = web::Data::new(Arc::new(Mutex::new(pm)));
-
-    let pmc = pm; //.clone();
-                  // spawns and wait for the UDPServer
-    let _task = actix::spawn(async {
-        let server = udpserver::UDPRefluxServer::new(addr, pmc);
-        let mut srv = server.await;
-        srv.run().await.unwrap();
-    });
+    let apm = Arc::new(Mutex::new(pm));
+    let data = web::Data::new(apm);
+    // let pme = apm.lock().unwrap().clone();
+    // // spawns and wait for the UDPServer
+    // let _task = actix::spawn(async {
+    //     let server = udpserver::UDPRefluxServer::new(addr, pme);
+    //     let mut srv = server.await;
+    //     srv.run().await.unwrap();
+    // });
 
     info!("Listening to http");
     HttpServer::new(move || {
@@ -41,7 +41,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .app_data(data.clone())
             .service(handlers::write_timeseries)
-            .service(handlers::query_timeseries)
+            //.service(handlers::query_timeseries)
             .service(handlers::list_timeseries)
     })
     .bind("127.0.0.1:8086")?

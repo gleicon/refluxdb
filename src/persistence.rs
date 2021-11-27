@@ -70,7 +70,8 @@ impl TimeseriesDiskPersistenceManager {
             .lock()
             .unwrap()
             .get(&timeseries_name.clone())
-            .unwrap();
+            .unwrap()
+            .clone();
 
         let mut db = Glue::new(storage.clone());
         let uuid = Uuid::new_v4();
@@ -106,12 +107,12 @@ impl TimeseriesDiskPersistenceManager {
         if rows.len() == 0 {
             return Err(format!("No data found for query"));
         };
-        self._parse_select_resultset_row(rows[0])
+        self._parse_select_resultset_row(&rows[0])
     }
 
     pub fn _parse_select_payload_range(
         &mut self,
-        payload: Payload,
+        payload: &Payload,
     ) -> Result<Vec<Measurement>, String> {
         let rows = match payload {
             Payload::Select { labels: _, rows } => rows,
@@ -123,7 +124,7 @@ impl TimeseriesDiskPersistenceManager {
             //return Err(format!("No data found for query"));
             return Ok(ev);
         };
-        let ev: Vec<Measurement> = Vec::new();
+        let mut ev: Vec<Measurement> = Vec::new();
 
         for row in rows {
             match self._parse_select_resultset_row(row) {
@@ -136,29 +137,29 @@ impl TimeseriesDiskPersistenceManager {
 
     pub fn _parse_select_resultset_row(
         &mut self,
-        row: std::vec::Vec<gluesql::data::Value>,
+        row: &std::vec::Vec<gluesql::data::Value>,
     ) -> Result<Measurement, String> {
-        let key = match row[0] {
+        let key = match &row[0] {
             Value::I64(key) => key,
             val => return Err(format!("Unexpected value: {:?}", val)),
         };
-        let id = match row[1] {
+        let id = match &row[1] {
             Value::Uuid(id) => id,
             val => return Err(format!("Unexpected value: {:?}", val)),
         };
-        let value = match row[2] {
+        let value = match &row[2] {
             Value::F64(value) => value,
             val => return Err(format!("Unexpected value: {:?}", val)),
         };
-        let tt = match row[3] {
+        let tt = match &row[3] {
             Value::Map(tags) => tags,
-            _ => HashMap::new(), // TODO: temp mock
+            //   _ => HashMap::new(), // TODO: temp mock
             val => return Err(format!("Unexpected value: {:?}", val)),
         };
         Ok(Measurement {
-            key: key,
-            id: Uuid::from_u128(id),
-            value: value,
+            key: key.clone(),
+            id: Uuid::from_u128(id.clone()),
+            value: value.clone(),
             tags: HashMap::new(), //tt,
         })
     }
@@ -172,8 +173,9 @@ impl TimeseriesDiskPersistenceManager {
             .lock()
             .unwrap()
             .get(&timeseries_name.clone())
-            .unwrap();
-        let db = Glue::new(storage.clone());
+            .unwrap()
+            .clone();
+        let mut db = Glue::new(storage.clone());
         let query = format!(
             "SELECT key, id, value, tags from {} LIMIT 1",
             timeseries_name,
@@ -199,8 +201,9 @@ impl TimeseriesDiskPersistenceManager {
             .lock()
             .unwrap()
             .get(&timeseries_name.clone())
-            .unwrap();
-        let db = Glue::new(storage.clone());
+            .unwrap()
+            .clone();
+        let mut db = Glue::new(storage.clone());
         let query = format!(
             "SELECT key, id, value, tags from {} WHERE key >= {} AND key <= {}",
             timeseries_name, start_key, end_key
