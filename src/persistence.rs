@@ -98,6 +98,70 @@ impl TimeseriesDiskPersistenceManager {
         }
     }
 
+    pub fn _parse_select_payload(&mut self, payload: Payload) -> Result<Measurement, String> {
+        let rows = match payload {
+            Payload::Select { labels: _, rows } => rows,
+            _ => return Err(format!("Unexpected result: {:?}", payload)),
+        };
+        if rows.len() == 0 {
+            return Err(format!("No data found for query"));
+        };
+        self._parse_select_resultset_row(rows[0])
+    }
+
+    pub fn _parse_select_payload_range(
+        &mut self,
+        payload: Payload,
+    ) -> Result<Vec<Measurement>, String> {
+        let rows = match payload {
+            Payload::Select { labels: _, rows } => rows,
+            _ => return Err(format!("Unexpected result: {:?}", payload)),
+        };
+        let ev: Vec<Measurement> = Vec::new();
+
+        if rows.len() == 0 {
+            //return Err(format!("No data found for query"));
+            return Ok(ev);
+        };
+        let ev: Vec<Measurement> = Vec::new();
+
+        for row in rows {
+            match self._parse_select_resultset_row(row) {
+                Ok(e) => ev.push(e),
+                Err(e) => return Err(format!("Error parsing range: {}", e)),
+            }
+        }
+        Ok(ev)
+    }
+
+    pub fn _parse_select_resultset_row(
+        &mut self,
+        row: std::vec::Vec<gluesql::data::Value>,
+    ) -> Result<Measurement, String> {
+        let key = match row[0] {
+            Value::I64(key) => key,
+            val => return Err(format!("Unexpected value: {:?}", val)),
+        };
+        let id = match row[1] {
+            Value::Uuid(id) => id,
+            val => return Err(format!("Unexpected value: {:?}", val)),
+        };
+        let value = match row[2] {
+            Value::F64(value) => value,
+            val => return Err(format!("Unexpected value: {:?}", val)),
+        };
+        let tt = match row[3] {
+            Value::Map(tags) => tags,
+            _ => HashMap::new(), // TODO: temp mock
+            val => return Err(format!("Unexpected value: {:?}", val)),
+        };
+        Ok(Measurement {
+            key: key,
+            id: Uuid::from_u128(id),
+            value: value,
+            tags: HashMap::new(), //tt,
+        })
+    }
     pub fn get_measurement(
         &mut self,
         timeseries_name: String,
@@ -116,7 +180,7 @@ impl TimeseriesDiskPersistenceManager {
         );
         match db.execute(&query) {
             Ok(payload) => {
-                return match (self._parse_select_payload(payload)) {
+                return match self._parse_select_payload(payload) {
                     Ok(ev) => return Ok(ev),
                     Err(e) => Err(format!("Error parsing data: {}", e)),
                 }
@@ -124,41 +188,6 @@ impl TimeseriesDiskPersistenceManager {
             Err(e) => return Err(format!("Error querying measurement: {}", e)),
         };
     }
-
-    pub fn _parse_select_payload(&mut self, payload: Payload) -> Result<Measurement, String> {
-        let rows = match payload {
-            Payload::Select { labels: _, rows } => rows,
-            _ => return Err(format!("Unexpected result: {:?}", payload)),
-        };
-        if rows.len() == 0 {
-            return Err(format!("No data found for query"));
-        };
-        let key = match rows[0][0] {
-            Value::I64(key) => key,
-            val => return Err(format!("Unexpected value: {:?}", val)),
-        };
-        let id = match rows[0][1] {
-            Value::Uuid(id) => id,
-            val => return Err(format!("Unexpected value: {:?}", val)),
-        };
-        let value = match rows[0][2] {
-            Value::F64(value) => value,
-            val => return Err(format!("Unexpected value: {:?}", val)),
-        };
-        let tt = match rows[0][3] {
-            Value::Map(tags) => tags,
-            _ => HashMap::new(),
-            val => return Err(format!("Unexpected value: {:?}", val)),
-        };
-        let ev = Measurement {
-            key: key,
-            id: Uuid::from_u128(id),
-            value: value,
-            tags: HashMap::new(), //tt,
-        };
-        return Ok(ev);
-    }
-
     pub fn get_measurement_range(
         &mut self,
         timeseries_name: String,
@@ -179,7 +208,7 @@ impl TimeseriesDiskPersistenceManager {
         // fetch or create the db handler
         match db.execute(&query) {
             Ok(payload) => {
-                return match (self._parse_select_payload(payload)) {
+                return match self._parse_select_payload(payload) {
                     Ok(ev) => return Ok(vec![ev]),
                     Err(e) => Err(format!("Error parsing data: {}", e)),
                 }
