@@ -25,6 +25,7 @@ use uuid::Uuid;
 //      tags -> key/value tag map
 
 // One Glue + Sled db per timeseries
+// Table structure
 // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);",
 // TODO: separated tag table: "CREATE TABLE <timeseries_name>_tags (id UUID, key TEXT, value TEXT);",
 
@@ -234,11 +235,50 @@ impl TimeseriesDiskPersistenceManager {
                 self.storages
                     .lock()
                     .unwrap()
-                    .insert(timeseries_name, ss.clone());
-                return Ok(true);
+                    .insert(timeseries_name.clone(), ss.clone());
+                self._check_db_schema(timeseries_name.clone(), ss.clone(), true)
+                    .unwrap();
+                Ok(true)
             }
             // run CREATE statement if the table does not exists
+            // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);"
             Err(e) => (return Err(format!("Error creating storage {}", e))),
+        }
+    }
+    fn _check_db_schema(
+        &mut self,
+        timeseries_name: String,
+        storage: gluesql::storages::SledStorage,
+        create: bool,
+    ) -> Result<String, String> {
+        // let storage = self
+        //     .storages
+        //     .lock()
+        //     .unwrap()
+        //     .get(&timeseries_name.clone())
+        //     .unwrap()
+        //     .clone();
+        let mut db = Glue::new(storage.clone());
+        let query = format!("SELECT * from {} LIMIT 1", timeseries_name,);
+        match db.execute(&query) {
+            // test the table
+            Ok(payload) => {
+                return match self._parse_select_payload_range(&payload) {
+                    Ok(e) => {
+                        if e.len() <= 0 {
+                            if create {
+                                db.execute("CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);").unwrap();
+                                return Ok(format!("Table created"));
+                            }
+                            return Ok(format!("Table does not exist"));
+                        } else {
+                            return Ok(format!("Table exists"));
+                        };
+                    }
+                    Err(e) => Err(format!("Error parsing data: {}", e)),
+                }
+            }
+            Err(e) => return Err(format!("Error querying measurement: {}", e)),
         };
     }
 
