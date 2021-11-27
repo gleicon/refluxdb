@@ -1,7 +1,7 @@
 use actix_web::{middleware, web, App, HttpServer};
 use log::info;
 use std::env;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // cargo run
 // nc -u 127.0.0.1 8089
@@ -25,10 +25,10 @@ async fn main() -> std::io::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8089".to_string());
     let pm = persistence::TimeseriesDiskPersistenceManager::new("databases".to_string());
-    let data = web::Data::new(Mutex::new(pm.clone()));
+    let data = web::Data::new(Arc::new(Mutex::new(pm)));
 
-    let pmc = pm.clone();
-    // spawns and wait for the UDPServer
+    let pmc = pm; //.clone();
+                  // spawns and wait for the UDPServer
     let _task = actix::spawn(async {
         let server = udpserver::UDPRefluxServer::new(addr, pmc);
         let mut srv = server.await;

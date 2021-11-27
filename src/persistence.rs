@@ -1,163 +1,184 @@
 use chrono::Local;
+use gluesql::prelude::*;
 use serde::{Deserialize, Serialize};
-use sled::Config;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 // timeseries persistence manager
-// structure:
-//  one sled database per timeseries, all within a root directory
+// Measurement: Unit of data tied to a time, within a timeseries, annotated with tags
+// Timeseries: A set of immutable measurements that move forward in time
+// Resultset: a slice of data from a timeseries within T(start) and T(end)
+// Tags: json annotations to measurements used to filter and group resultsets
+// Database structure:
+//
+// A sled database per timeseries, all within a root directory, abstracted by GlueSQL
 //      pros: isolation, parallelism
 //      cons: disk space, migration
-// immutable structure, measurements can't be changed
+// Immutable data: measurements can't be changed
 // interface:
-//  key -> unix timestamp, ordered
-//  value -> envelope with:
-//      auto_id -> db generated automatic id
-//      Vec<u8> value
-//      Hashmap<String, String> annotations (triggers and tags)
-//  Vec<u8> in and out
-//  value bincode serde
+//      id -> UUID
+//      time -> unix timestamp, ordered
+//      value -> float (to be float, int, string and bool)
+//      tags -> key/value tag map
+
+// One Glue + Sled db per timeseries
+// "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);",
+// TODO: separated tag table: "CREATE TABLE <timeseries_name>_tags (id UUID, key TEXT, value TEXT);",
 
 // on start: read all databases in a folder, keep the handlers
-// TODO: on key change: watch_prefix per table w/ watcher registration
-// TODO: stats: disk space, queue number, queue sizes
-// TODO: LRU tables (expire/delete old messages)
 // TODO: ensure immutability is enforced through measurement id or fingerprint
-
-// #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-// struct Envelope {
-//     body: String, //Vec<u8>,
-// }
 
 #[derive(Clone)]
 pub struct TimeseriesDiskPersistenceManager {
     root_path: String,
     path: PathBuf,
-    databases: HashMap<String, sled::Db>,
+    pub storages: Arc<Mutex<HashMap<String, gluesql::storages::SledStorage>>>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct TimestampEnvelope {
-    pub key: i64,
-    pub id: Vec<u8>,
-    pub value: Vec<u8>,
-    pub created_at: i64,
+pub struct Measurement {
+    pub key: i64, // A timestamp
+    pub id: Uuid, // Unique ID for each measurement
+    pub value: f64,
     pub tags: HashMap<String, String>,
 }
 
 impl TimeseriesDiskPersistenceManager {
     pub fn list_timeseries(self) -> Result<Vec<String>, String> {
-        let databases: Vec<String> = self.databases.iter().map(|(db, _)| db.clone()).collect();
-        return Ok(databases);
+        let databases: Vec<String> = self
+            .storages
+            .lock()
+            .unwrap()
+            .keys()
+            .map(|dbname| dbname.clone())
+            .collect();
+        return Ok(databases.clone());
     }
 
     // TODO: implement tags
     pub fn save_measurement(
         &mut self,
         timeseries_name: String,
-        body: Vec<u8>,
-    ) -> Result<TimestampEnvelope, String> {
-        let mut db = self.databases.get(&timeseries_name.clone());
-        match db.clone() {
-            Some(_) => (),
-            None => {
-                self.load_or_create_database(timeseries_name.clone())
-                    .unwrap();
-                db = self.databases.get(&timeseries_name);
+        value: f64,
+        tags: HashMap<String, String>,
+    ) -> Result<Measurement, String> {
+        let storage = self
+            .storages
+            .lock()
+            .unwrap()
+            .get(&timeseries_name.clone())
+            .unwrap();
+
+        let mut db = Glue::new(storage.clone());
+        let uuid = Uuid::new_v4();
+        let now = Local::now().timestamp_millis();
+        let tags_json = serde_json::to_string(&tags);
+        let query = format!(
+            "INSERT INTO {} VALUES ({}, {}, {}, {})",
+            timeseries_name,
+            uuid,
+            now,
+            value,
+            tags_json.unwrap()
+        );
+        match db.execute(&query) {
+            Ok(result) => {
+                let ev = Measurement {
+                    key: now.clone(),
+                    id: uuid.clone(),
+                    value: value.clone(),
+                    tags: tags.clone(),
+                };
+                return Ok(ev);
             }
-        }
-
-        let db = db.unwrap();
-        let autoid = format!("{}:{}", timeseries_name, db.generate_id().unwrap());
-        let dt = Local::now();
-        let key = format!("{}", dt.timestamp_millis());
-
-        let ev = TimestampEnvelope {
-            key: dt.timestamp_millis(),
-            id: autoid.as_bytes().to_vec(),
-            value: body.clone(),
-            created_at: dt.timestamp_millis(),
-            tags: HashMap::new(),
-        };
-
-        let encoded: Vec<u8> = bincode::serialize(&ev).unwrap();
-        let res = db.insert(key.clone(), encoded.clone());
-
-        match res {
-            Ok(Some(b)) => Err(format!("Error - measurement already exists {:?}", b)),
-            Ok(None) => Ok(ev),
-            Err(e) => Err(format!("Error persisting message: {}", e)),
-        }
-    }
-
-    // TODO: that should die, the table should be immutable (no pop or update)
-    pub fn pop_newest_measurement(
-        &mut self,
-        timeseries_name: String,
-    ) -> Result<TimestampEnvelope, String> {
-        let db = self.databases.get(&timeseries_name.clone());
-
-        // fetch or create the db handler
-        let dbc = match db.clone() {
-            Some(_) => (db),
-            None => {
-                self.load_or_create_database(timeseries_name.clone())
-                    .unwrap();
-                self.databases.get(&timeseries_name)
-            }
-        };
-
-        let dbc = dbc.unwrap();
-
-        match dbc.pop_max().unwrap() {
-            Some((_, value)) => Ok(bincode::deserialize(value.as_ref()).unwrap()),
-            None => Err("Empty table".to_string()),
+            Err(e) => return Err(format!("Error saving measurement: {}", e)),
         }
     }
 
     pub fn get_measurement(
         &mut self,
         timeseries_name: String,
-        key: String,
-    ) -> Result<TimestampEnvelope, String> {
-        let db = self.databases.get(&timeseries_name.clone());
-        // fetch or create the db handler
-        let dbc = match db.clone() {
-            Some(_) => (db),
-            None => {
-                self.load_or_create_database(timeseries_name.clone())
-                    .unwrap();
-                self.databases.get(&timeseries_name)
+        time: i64,
+    ) -> Result<Measurement, String> {
+        let storage = self
+            .storages
+            .lock()
+            .unwrap()
+            .get(&timeseries_name.clone())
+            .unwrap();
+        let db = Glue::new(storage.clone());
+        let query = format!(
+            "SELECT key, id, value, tags from {} LIMIT 1",
+            timeseries_name,
+        );
+        match db.execute(&query) {
+            Ok(payload) => {
+                let rows = match payload {
+                    Payload::Select { labels: _, rows } => rows,
+                    _ => panic!("Unexpected result: {:?}", payload),
+                };
+                if rows.len() == 0 {
+                    return Err(format!("No data found for query"));
+                };
+                let key = match rows[0][0] {
+                    Value::I64(key) => key,
+                    val => return Err(format!("Unexpected value: {:?}", val)),
+                };
+                let id = match rows[0][1] {
+                    Value::Uuid(id) => id,
+                    val => return Err(format!("Unexpected value: {:?}", val)),
+                };
+                let value = match rows[0][2] {
+                    Value::F64(value) => value,
+                    val => return Err(format!("Unexpected value: {:?}", val)),
+                };
+                let tt = match rows[0][3] {
+                    Value::Map(tags) => tags,
+                    _ => HashMap::new(),
+                    val => return Err(format!("Unexpected value: {:?}", val)),
+                };
+                let ev = Measurement {
+                    key: key,
+                    id: Uuid::from_u128(id),
+                    value: value,
+                    tags: HashMap::new(), //tt,
+                };
+                return Ok(ev);
             }
+            Err(e) => return Err(format!("Error querying measurement: {}", e)),
         };
-
-        let dbc = dbc.unwrap();
-
-        match dbc.get(key).unwrap() {
-            Some(value) => Ok(bincode::deserialize(value.as_ref()).unwrap()),
-            None => Err("Empty queue table".to_string()),
-        }
     }
 
     pub fn get_measurement_range(
         &mut self,
         timeseries_name: String,
-        start_key: String,
-        end_key: String,
-    ) -> Result<Vec<TimestampEnvelope>, String> {
-        let db = self.databases.get(&timeseries_name.clone());
+        start_key: i64,
+        end_key: i64,
+    ) -> Result<Vec<Measurement>, String> {
+        let storage = self
+            .storages
+            .lock()
+            .unwrap()
+            .get(&timeseries_name.clone())
+            .unwrap();
+        let db = Glue::new(storage.clone());
+        let query = format!(
+            "SELECT key, id, value, tags from {} WHERE key >= {} AND key <= {}",
+            timeseries_name, start_key, end_key
+        );
         // fetch or create the db handler
-        let dbc = match db.clone() {
+        match db.execute(&query) {
             Some(_) => (db),
             None => {
                 self.load_or_create_database(timeseries_name.clone())
                     .unwrap();
-                self.databases.get(&timeseries_name)
+                self.storages.get(&timeseries_name)
             }
         };
-        let mut tev: Vec<TimestampEnvelope> = Vec::new();
+        let mut tev: Vec<Measurement> = Vec::new();
         let dbc_iter = dbc.unwrap().range(start_key..end_key);
 
         for val in dbc_iter {
@@ -173,14 +194,21 @@ impl TimeseriesDiskPersistenceManager {
         let mut pb = PathBuf::new();
         pb.push(&self.path);
         pb.push(timeseries_name.clone());
-        let config = Config::new().path(pb);
-        match config.open() {
-            Ok(d) => {
-                self.databases.insert(timeseries_name, d);
-                Ok(true)
+        let path = pb.to_str();
+
+        // wrap sledstorage around a new Glue obj before using it:
+        // let mut database = Glue::new(storage);
+        match SledStorage::new(&path.unwrap()) {
+            Ok(ss) => {
+                self.storages
+                    .lock()
+                    .unwrap()
+                    .insert(timeseries_name, ss.clone());
+                return Ok(true);
             }
-            Err(e) => Err(format!("Error opening database: {:?}", e)),
-        }
+            // run CREATE statement if the table does not exists
+            Err(e) => (return Err(format!("Error creating storage {}", e))),
+        };
     }
 
     fn load_persistence(&mut self) {
@@ -208,7 +236,7 @@ impl TimeseriesDiskPersistenceManager {
         let bp = Path::new(&basepath);
         let mut s = Self {
             root_path: basepath.clone(),
-            databases: HashMap::new(),
+            storages: HashMap::new(),
             path: bp.to_path_buf(),
         };
         s.setup();

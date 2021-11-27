@@ -1,23 +1,21 @@
 use actix_web::{get, post, web, Error, HttpRequest, HttpResponse, Result};
 use log::info;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[get("/")]
 async fn list_timeseries(
-    pm: web::Data<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
+    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
+    let res = pm.lock().unwrap().clone().list_timeseries().unwrap();
     return Ok(HttpResponse::Ok()
         .content_type("application/json")
-        .json(format!(
-            "{:?}",
-            pm.lock().unwrap().clone().list_timeseries().unwrap()
-        )));
+        .json(format!("{:?}", res)));
 }
 
 #[post("/query")]
 async fn query_timeseries(
     req: HttpRequest,
-    data: web::Data<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
+    data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     // q -> query string
     let qs = req.query_string();
@@ -46,7 +44,7 @@ async fn query_timeseries(
 #[post("/write")]
 async fn write_timeseries(
     req_body: String,
-    pm: web::Data<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
+    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     match crate::protocol::LineProtocol::parse(req_body.clone()) {
         Ok(b) => {

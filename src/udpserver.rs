@@ -59,7 +59,6 @@ impl UDPRefluxServer {
             to_send: None,
             pm: pm,
         };
-
         return s;
     }
 }
