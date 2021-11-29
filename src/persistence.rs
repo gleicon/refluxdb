@@ -171,23 +171,49 @@ impl TimeseriesDiskPersistenceManager {
             tags: HashMap::new(), //tt,
         })
     }
-    pub fn get_measurement(
+
+    // consider this insecure by design.
+    pub fn query_measurements(
         &mut self,
-        timeseries_name: String,
-        time: i64,
-    ) -> Result<Measurement, String> {
-        let storage = self
-            .storages
-            .lock()
-            .unwrap()
-            .get(&timeseries_name.clone())
-            .unwrap()
-            .clone();
+        // timeseries_name: String,
+        query: String,
+    ) -> Result<Vec<Measurement>, String> {
+        if query.to_uppercase().contains("INSERT")
+            || query.to_uppercase().contains("DELETE")
+            || query.to_uppercase().contains("UPDATE")
+            || query.to_uppercase().contains("DROP")
+            || query.to_uppercase().contains("CREATE")
+        {
+            return Err(format!("Invalid query {}", query));
+        }
+
+        let psql = gluesql::parse_sql::parse(&query);
+        match psql {
+            Ok(t) => match &t[0] {
+                gluesql::sqlparser::ast::Statement::Query(tt) => match &tt.body {
+                    gluesql::sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
+                        gluesql::sqlparser::ast::TableFactor::Table {
+                            name,
+                            alias: _,
+                            args: _,
+                            with_hints: _,
+                        } => {
+                            let tablename = &name.0[0].value;
+                            return self._run_query(tablename.clone(), query);
+                        }
+                        _ => return Err(format!("No table found")),
+                    },
+                    _ => return Err(format!("Invalid SELECT statement: {}", tt.body)),
+                },
+                _ => return Err(format!("Unknown query: {}", t[0])),
+            },
+            Err(e) => return Err(format!("Improper query: {}", e)),
+        }
+    }
+
+    fn _run_query(&mut self, ts_name: String, query: String) -> Result<Vec<Measurement>, String> {
+        let storage = self.storages.lock().unwrap().get(&ts_name).unwrap().clone();
         let mut db = Glue::new(storage.clone());
-        let query = format!(
-            "SELECT key, id, value, tags from {} LIMIT 1",
-            timeseries_name,
-        );
         match db.execute(&query) {
             Err(e) => match e {
                 gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
@@ -205,13 +231,11 @@ impl TimeseriesDiskPersistenceManager {
                     return Err(format!("query error: {:?}", e));
                 }
             },
-            Ok(payload) => {
-                return match self._parse_select_payload(payload) {
-                    Ok(ev) => return Ok(ev),
-                    Err(e) => Err(format!("Error parsing data: {}", e)),
-                }
-            }
-        };
+            Ok(payload) => match self._parse_select_payload(payload) {
+                Ok(ev) => return Ok(vec![ev]),
+                Err(e) => Err(format!("Error parsing data: {}", e)),
+            },
+        }
     }
     pub fn get_measurement_range(
         &mut self,

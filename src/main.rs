@@ -44,7 +44,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(middleware::Logger::default())
             .app_data(data.clone())
             .service(handlers::write_timeseries)
-            //.service(handlers::query_timeseries)
+            .service(handlers::query_timeseries)
             .service(handlers::list_timeseries)
             .service(handlers::query_timeseries_range)
     })
