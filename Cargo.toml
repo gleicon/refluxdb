@@ -6,7 +6,21 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-chrono = "0.4.19"
+actix-web = { version = "4.0.0-beta.12" }
+tokio = { version = "1.8.1", features = ["process", "sync", "rt", "signal"] }
+futures = "0.3.15"
+log = "0.4.0"
+
+env_logger = "0.8.3"
+indexmap = "1.7.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "0.8", features = ["serde", "v4"] }
+sled = "0.34.6"
+bincode = "1.3.3"
+chrono = { version = "0.4.19", features = ["serde"] }
+actix = "0.11.1"
+
+gluesql = { git = "https://github.com/gluesql/gluesql", rev = "87ba30c" }
 
 
