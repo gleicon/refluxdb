@@ -1,7 +1,6 @@
 use log::info;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 
 pub struct UDPRefluxServer {

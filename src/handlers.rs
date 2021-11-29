@@ -33,6 +33,7 @@ async fn query_timeseries_range(
 ) -> Result<HttpResponse, Error> {
     // q -> query string
     info!("{}", format!("{} to {}", info.start, info.end));
+    info!("{}", format!("{:?}", req));
     let mut pm = data.lock().unwrap().clone();
     let measurement_range = pm.get_measurement_range(ts.timeseries.clone(), info.start, info.end);
     match measurement_range {

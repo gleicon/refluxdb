@@ -36,9 +36,9 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct TimeseriesDiskPersistenceManager {
-    root_path: String,
-    path: PathBuf,
+    pub timeseries_path: HashMap<String, String>,
     pub storages: Arc<Mutex<HashMap<String, gluesql::storages::SledStorage>>>,
+    pub basepath: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -244,14 +244,18 @@ impl TimeseriesDiskPersistenceManager {
     }
 
     pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
-        let mut pb = PathBuf::new();
-        pb.push(&self.path);
-        pb.push(timeseries_name.clone());
-        let path = pb.to_str();
+        // let mut pb = PathBuf::new();
+        // pb.push(&self.root_path);
+        // pb.push(timeseries_name.clone());
+        // let path = pb.to_str();
 
         // wrap sledstorage around a new Glue obj before using it:
         // let mut database = Glue::new(storage);
-        match SledStorage::new(&path.unwrap()) {
+        let ts_tablename = timeseries_name.split("/").last().unwrap();
+        self.timeseries_path
+            .insert(ts_tablename.into(), timeseries_name.clone());
+
+        match SledStorage::new(&timeseries_name) {
             Ok(ss) => {
                 self.storages
                     .lock()
@@ -274,7 +278,7 @@ impl TimeseriesDiskPersistenceManager {
         create: bool,
     ) -> Result<String, String> {
         let mut db = Glue::new(storage.clone());
-        let query = format!("SELECT * from {} LIMIT 1", timeseries_name,);
+        let query = format!("SELECT * from {} LIMIT 1;", timeseries_name,);
         match db.execute(&query) {
             Err(e) => match e {
                 gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
@@ -289,7 +293,7 @@ impl TimeseriesDiskPersistenceManager {
                     }
                 }
                 _ => {
-                    return Err(format!("query error: {:?}", e));
+                    return Err(format!("query error: {} - {:?}", query, e));
                 }
             },
             _ => return Ok(format!("Database {} loaded", timeseries_name.clone())),
@@ -297,12 +301,17 @@ impl TimeseriesDiskPersistenceManager {
     }
 
     fn load_persistence(&mut self) {
-        let dir = &self.path;
+        let dir = Path::new(&self.basepath);
         if dir.is_dir() {
             for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     let timeseries_name = path.to_str().unwrap().to_string();
+                    println!(
+                        "Loading db {} - {:?}",
+                        timeseries_name.clone(),
+                        self.basepath
+                    );
                     self.load_or_create_database(timeseries_name).unwrap();
                 };
             }
@@ -310,19 +319,19 @@ impl TimeseriesDiskPersistenceManager {
     }
 
     pub fn setup(&mut self) {
-        if !Path::new(&self.root_path).exists() {
-            fs::create_dir_all(&self.root_path).unwrap();
+        if !Path::new(&self.basepath).exists() {
+            fs::create_dir_all(&self.basepath).unwrap();
+            return;
         }
 
         self.load_persistence();
     }
 
     pub fn new(basepath: String) -> Self {
-        let bp = Path::new(&basepath);
         let mut s = Self {
-            root_path: basepath.clone(),
+            basepath: basepath.clone(),
+            timeseries_path: HashMap::new(),
             storages: Arc::new(Mutex::new(HashMap::new())),
-            path: bp.to_path_buf(),
         };
         s.setup();
         return s;
