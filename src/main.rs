@@ -20,20 +20,23 @@ async fn main() -> std::io::Result<()> {
         "actix_web=info,actix_server=info,refluxdb=info,refluxdb::handlers=info",
     );
     env_logger::init();
+    let db_dir = "databases";
 
     let addr = env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:8089".to_string());
-    let pm = persistence::TimeseriesDiskPersistenceManager::new("databases".to_string());
-    let apm = Arc::new(Mutex::new(pm));
-    let data = web::Data::new(apm);
+    let pm = Arc::new(Mutex::new(
+        persistence::TimeseriesDiskPersistenceManager::new(db_dir.to_string()),
+    ));
+    // let apm = Arc::new(Mutex::new(pm));
+    let data = web::Data::new(pm.clone());
     // let pme = apm.lock().unwrap().clone();
-    // // spawns and wait for the UDPServer
-    // let _task = actix::spawn(async {
-    //     let server = udpserver::UDPRefluxServer::new(addr, pme);
-    //     let mut srv = server.await;
-    //     srv.run().await.unwrap();
-    // });
+    // spawns and wait for the UDPServer
+    let _task = actix::spawn(async move {
+        let server = udpserver::UDPRefluxServer::new(addr, pm.clone());
+        let mut srv = server.await;
+        srv.run().await.unwrap();
+    });
 
     info!("Listening to http");
     HttpServer::new(move || {

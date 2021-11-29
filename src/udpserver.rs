@@ -1,13 +1,14 @@
 use log::info;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
 
 pub struct UDPRefluxServer {
     pub socket: UdpSocket,
     buf: Vec<u8>,
     to_send: Option<(usize, SocketAddr)>,
-    pm: crate::persistence::TimeseriesDiskPersistenceManager,
+    pm: Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
 }
 
 impl UDPRefluxServer {
@@ -48,7 +49,7 @@ impl UDPRefluxServer {
     }
     pub async fn new(
         addr: String,
-        pm: crate::persistence::TimeseriesDiskPersistenceManager,
+        pm: Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
     ) -> Self {
         let socket = UdpSocket::bind(&addr).await.unwrap();
         info!("Listening on UDP: {}", socket.local_addr().unwrap());
