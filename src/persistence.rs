@@ -5,7 +5,7 @@ use gluesql::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -46,6 +46,7 @@ pub struct Measurement {
     pub key: i64, // A timestamp
     pub id: Uuid, // Unique ID for each measurement
     pub value: f64,
+    // ts name -> ts db path
     pub tags: HashMap<String, String>,
 }
 
@@ -59,6 +60,10 @@ impl TimeseriesDiskPersistenceManager {
             .map(|dbname| dbname.clone())
             .collect();
         return Ok(databases.clone());
+    }
+
+    pub fn timeseries_exists(self, ts_name: String) -> bool {
+        return self.timeseries_path.contains_key(&ts_name);
     }
 
     // TODO: implement tags

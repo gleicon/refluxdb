@@ -1,4 +1,5 @@
 use actix_web::{get, post, web, Error, HttpRequest, HttpResponse, Result};
+use chrono::{DateTime, Local, Utc};
 use log::info;
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
@@ -8,10 +9,10 @@ struct TimeseriesInfo {
     timeseries: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct RangeQueryRequest {
-    start: i64,
-    end: i64,
+    start: String,
+    end: String,
 }
 
 #[get("/")]
@@ -31,11 +32,24 @@ async fn query_timeseries_range(
     req: HttpRequest,
     data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
+    // sanitize query and range strings
+    // filter for existing ts only
     // q -> query string
-    info!("{}", format!("{} to {}", info.start, info.end));
+    let st = info.start.parse::<DateTime<Utc>>().unwrap();
+    let en = info.end.parse::<DateTime<Utc>>().unwrap();
+    println!("{}", format!("{:?} to {:?}", st, en));
     info!("{}", format!("{:?}", req));
     let mut pm = data.lock().unwrap().clone();
-    let measurement_range = pm.get_measurement_range(ts.timeseries.clone(), info.start, info.end);
+    if !pm.clone().timeseries_exists(ts.timeseries.clone()) {
+        return Ok(HttpResponse::NotFound()
+            .content_type("application/json")
+            .body(format!("Timeseries not found: {}", ts.timeseries.clone())));
+    }
+    let measurement_range = pm.get_measurement_range(
+        ts.timeseries.clone(),
+        st.timestamp_millis(),
+        en.timestamp_millis(),
+    );
     match measurement_range {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()

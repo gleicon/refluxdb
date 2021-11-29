@@ -17,7 +17,7 @@ mod udpserver;
 async fn main() -> std::io::Result<()> {
     std::env::set_var(
         "RUST_LOG",
-        "actix_web=debug,actix_server=debug,refluxdb=info",
+        "actix_web=info,actix_server=info,refluxdb=info,refluxdb::handlers=info",
     );
     env_logger::init();
 
@@ -43,6 +43,7 @@ async fn main() -> std::io::Result<()> {
             .service(handlers::write_timeseries)
             //.service(handlers::query_timeseries)
             .service(handlers::list_timeseries)
+            .service(handlers::query_timeseries_range)
     })
     .bind("127.0.0.1:8086")?
     .run()
