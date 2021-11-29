@@ -1,5 +1,7 @@
 use chrono::Local;
+use gluesql::executor::{EvaluateError, ExecuteError, FetchError};
 use gluesql::prelude::*;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -182,13 +184,28 @@ impl TimeseriesDiskPersistenceManager {
             timeseries_name,
         );
         match db.execute(&query) {
+            Err(e) => match e {
+                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
+                    return Err(format!("table fetch not found {:?}", a));
+                }
+
+                gluesql::result::Error::Execute(ExecuteError::TableNotFound(a)) => {
+                    return Err(format!("table execute not found {:?}", a));
+                }
+
+                gluesql::result::Error::Evaluate(EvaluateError::ValueNotFound(a)) => {
+                    return Err(format!("table evaluate not found {:?}", a));
+                }
+                _ => {
+                    return Err(format!("query error: {:?}", e));
+                }
+            },
             Ok(payload) => {
                 return match self._parse_select_payload(payload) {
                     Ok(ev) => return Ok(ev),
                     Err(e) => Err(format!("Error parsing data: {}", e)),
                 }
             }
-            Err(e) => return Err(format!("Error querying measurement: {}", e)),
         };
     }
     pub fn get_measurement_range(
@@ -211,15 +228,19 @@ impl TimeseriesDiskPersistenceManager {
         );
         // fetch or create the db handler
         match db.execute(&query) {
-            Ok(payload) => {
-                return match self._parse_select_payload(payload) {
-                    Ok(ev) => return Ok(vec![ev]),
-                    Err(e) => Err(format!("Error parsing data: {}", e)),
+            Ok(payload) => match self._parse_select_payload(payload) {
+                Ok(ev) => return Ok(vec![ev]),
+                Err(e) => Err(format!("Error parsing data: {}", e)),
+            },
+            Err(e) => match e {
+                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
+                    return Err(format!("Table not found: {}", a));
                 }
-            }
-            Err(e) => return Err(format!("Error querying measurement: {}", e)),
-        };
-        //let mut tev: Vec<Measurement> = Vec::new();
+                _ => {
+                    return Err(format!("Error querying measurement: {}", timeseries_name));
+                }
+            },
+        }
     }
 
     pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
@@ -245,40 +266,33 @@ impl TimeseriesDiskPersistenceManager {
             Err(e) => (return Err(format!("Error creating storage {}", e))),
         }
     }
+
     fn _check_db_schema(
         &mut self,
         timeseries_name: String,
         storage: gluesql::storages::SledStorage,
         create: bool,
     ) -> Result<String, String> {
-        // let storage = self
-        //     .storages
-        //     .lock()
-        //     .unwrap()
-        //     .get(&timeseries_name.clone())
-        //     .unwrap()
-        //     .clone();
         let mut db = Glue::new(storage.clone());
         let query = format!("SELECT * from {} LIMIT 1", timeseries_name,);
         match db.execute(&query) {
-            // test the table
-            Ok(payload) => {
-                return match self._parse_select_payload_range(&payload) {
-                    Ok(e) => {
-                        if e.len() <= 0 {
-                            if create {
-                                db.execute("CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);").unwrap();
-                                return Ok(format!("Table created"));
-                            }
-                            return Ok(format!("Table does not exist"));
-                        } else {
-                            return Ok(format!("Table exists"));
+            Err(e) => match e {
+                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
+                    if !create {
+                        return Err(format!("table fetch not found {:?}", a));
+                    } else {
+                        // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);"
+                        match db.execute("CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);") {
+                            Err(ei) => { return Err(format!("Error creating table: {} - {}", timeseries_name, ei)); }
+                            Ok(_) => {return Ok(format!("Database {} created", timeseries_name.clone()));}
                         };
                     }
-                    Err(e) => Err(format!("Error parsing data: {}", e)),
                 }
-            }
-            Err(e) => return Err(format!("Error querying measurement: {}", e)),
+                _ => {
+                    return Err(format!("query error: {:?}", e));
+                }
+            },
+            _ => return Ok(format!("Database {} loaded", timeseries_name.clone())),
         };
     }
 
