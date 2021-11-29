@@ -254,14 +254,18 @@ impl TimeseriesDiskPersistenceManager {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
         self.timeseries_path
             .insert(ts_tablename.into(), timeseries_name.clone());
-
+        println!(
+            "tablename: {} path: {}",
+            ts_tablename,
+            timeseries_name.clone()
+        );
         match SledStorage::new(&timeseries_name) {
             Ok(ss) => {
                 self.storages
                     .lock()
                     .unwrap()
                     .insert(timeseries_name.clone(), ss.clone());
-                self._check_db_schema(timeseries_name.clone(), ss.clone(), true)
+                self._check_db_schema(ts_tablename.into(), ss.clone(), true)
                     .unwrap();
                 Ok(true)
             }
@@ -278,17 +282,28 @@ impl TimeseriesDiskPersistenceManager {
         create: bool,
     ) -> Result<String, String> {
         let mut db = Glue::new(storage.clone());
-        let query = format!("SELECT * from {} LIMIT 1;", timeseries_name,);
+        let query = format!("SELECT id from {} LIMIT 1;", timeseries_name,);
         match db.execute(&query) {
             Err(e) => match e {
                 gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
                     if !create {
-                        return Err(format!("table fetch not found {:?}", a));
+                        return Err(format!("table fetch not found {:?} -> {}", a, query));
                     } else {
                         // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);"
-                        match db.execute("CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);") {
-                            Err(ei) => { return Err(format!("Error creating table: {} - {}", timeseries_name, ei)); }
-                            Ok(_) => {return Ok(format!("Database {} created", timeseries_name.clone()));}
+                        let query_create = format!(
+                            "CREATE TABLE {} (id UUID, time TIMESTAMP, value FLOAT, tags MAP);",
+                            timeseries_name
+                        );
+                        match db.execute(&query_create) {
+                            Err(ei) => {
+                                return Err(format!(
+                                    "Error creating table: {} - {} = {}",
+                                    timeseries_name, ei, query_create
+                                ));
+                            }
+                            Ok(_) => {
+                                return Ok(format!("Database {} created", timeseries_name.clone()));
+                            }
                         };
                     }
                 }
