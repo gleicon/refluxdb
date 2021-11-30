@@ -36,7 +36,8 @@ async fn main() -> std::io::Result<()> {
         let server = udpserver::UDPRefluxServer::new(addr, pm.clone());
         let mut srv = server.await;
         srv.run().await.unwrap();
-    });
+    })
+    .await;
 
     info!("Listening to http");
     HttpServer::new(move || {

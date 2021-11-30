@@ -1,6 +1,6 @@
 use actix_web::{get, post, web, Error, HttpResponse, Result};
-use chrono::{DateTime, Local, Utc};
-use log::info;
+use chrono::{DateTime, Utc};
+use log::{debug, info};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 
@@ -36,9 +36,6 @@ async fn query_timeseries_range(
     ts: web::Path<TimeseriesInfo>,
     data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
-    // sanitize query and range strings
-    // filter for existing ts only
-    // no SQL query in this route
     let st = info.start.parse::<DateTime<Utc>>().unwrap();
     let en = info.end.parse::<DateTime<Utc>>().unwrap();
     let mut pm = data.lock().unwrap().clone();
@@ -66,8 +63,7 @@ async fn query_timeseries_range(
     }
 }
 
-// consider this extremely insecure until proper SQL parsing and sanitization is implemented
-// along with read only storage.
+// Consider this extremely insecure until proper SQL parsing and sanitization is implemented with read only storage.
 // The timeseries is contained into the query and should be validated before going down the db sink
 #[post("/query")]
 async fn query_timeseries(
@@ -76,7 +72,7 @@ async fn query_timeseries(
 ) -> Result<HttpResponse, Error> {
     // q -> query string
     let qs = form.q.clone();
-    info!("{}", format!("{:?}", qs));
+    debug!("query string: {}", format!("{:?}", qs));
     let mut pm = data.lock().unwrap().clone();
     let pme = pm.query_measurements(qs.to_string());
     match pme {
@@ -86,6 +82,7 @@ async fn query_timeseries(
                 .json(format!("{:?}", ret)));
         }
         Err(e) => {
+            info!("Error: Query timeseries error {}", e);
             return Ok(HttpResponse::BadRequest()
                 .content_type("application/json")
                 .body(format!("Query timeseries error: {}", e)));

@@ -1,4 +1,5 @@
-use log::info;
+use log::{debug, info};
+use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -15,17 +16,37 @@ impl UDPRefluxServer {
     pub async fn run(&mut self) -> Result<(), io::Error> {
         loop {
             if let Some((size, peer)) = self.to_send {
+                println!("--> {:?}", peer);
+
                 match crate::protocol::LineProtocol::parse(
                     String::from_utf8_lossy(&self.buf[..size - 1]).to_string(),
                 ) {
                     Ok(b) => {
-                        let amt = self
-                            .socket
-                            .send_to(b.serialize().unwrap().as_bytes(), &peer)
-                            .await?;
-                        println!(
-                            "Echoed {}/{} bytes to {} - {:?}",
-                            amt,
+                        let mut htags: HashMap<String, String> = HashMap::new();
+                        for key in b.tag_set.clone().keys() {
+                            htags.insert(key.into(), b.tag_set.get(key).unwrap().into());
+                        }
+                        // One line for each measurement, represented bu field_set
+                        for field in b.field_set.clone() {
+                            self.pm
+                                .lock()
+                                .unwrap()
+                                .save_measurement(
+                                    b.measurement_name.clone(),
+                                    field.0,
+                                    field.1,
+                                    htags.clone(),
+                                )
+                                .unwrap();
+                        }
+                        // echo back code
+                        // let amt = self
+                        //     .socket
+                        //     .send_to(b.serialize().unwrap().as_bytes(), &peer)
+                        //     .await?;
+                        debug!(
+                            "got {:?}/{} bytes to {} - {:?}",
+                            b.serialize().clone(),
                             size,
                             peer,
                             String::from_utf8_lossy(&self.buf[..size - 1])

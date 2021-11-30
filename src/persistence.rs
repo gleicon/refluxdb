@@ -2,6 +2,7 @@ use chrono::Local;
 use gluesql::executor::{EvaluateError, ExecuteError, FetchError};
 use gluesql::prelude::*;
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -22,17 +23,20 @@ use uuid::Uuid;
 // Immutable data: measurements can't be changed
 // interface:
 //      id -> UUID
-//      time -> unix timestamp, ordered
+//      time -> unix timestamp, ordered - measurement time (expanded 11-30-2021)
+//      created_at -> unix timestamp, ordered, system time (added 11-30-2021)
+//      name -> value name (added 11-30-2021)
 //      value -> float (to be float, int, string and bool)
 //      tags -> key/value tag map
 
 // One Glue + Sled db per timeseries
 // Table structure
-// "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);",
+// "CREATE TABLE <timeseries_name> (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
 // TODO: separated tag table: "CREATE TABLE <timeseries_name>_tags (id UUID, key TEXT, value TEXT);",
 
 // on start: read all databases in a folder, keep the handlers
 // TODO: ensure immutability is enforced through measurement id or fingerprint
+// TODO: Pre-calculated stats for each series
 
 #[derive(Clone)]
 pub struct TimeseriesDiskPersistenceManager {
@@ -70,6 +74,7 @@ impl TimeseriesDiskPersistenceManager {
     pub fn save_measurement(
         &mut self,
         timeseries_name: String,
+        name: String,
         value: f64,
         tags: HashMap<String, String>,
     ) -> Result<Measurement, String> {
@@ -95,6 +100,7 @@ impl TimeseriesDiskPersistenceManager {
         );
         match db.execute(&query) {
             Ok(result) => {
+                debug!("{:?}", result);
                 let ev = Measurement {
                     key: now.clone(),
                     id: uuid.clone(),
@@ -107,6 +113,75 @@ impl TimeseriesDiskPersistenceManager {
         }
     }
 
+    // consider this insecure by design. the timeseries name comes with the query string :grin:
+    pub fn query_measurements(&mut self, query: String) -> Result<Vec<Measurement>, String> {
+        if query.to_uppercase().contains("INSERT")
+            || query.to_uppercase().contains("DELETE")
+            || query.to_uppercase().contains("UPDATE")
+            || query.to_uppercase().contains("DROP")
+            || query.to_uppercase().contains("CREATE")
+        {
+            return Err(format!("Invalid query {}", query));
+        }
+
+        let psql = gluesql::parse_sql::parse(&query);
+        match psql {
+            Ok(t) => match &t[0] {
+                gluesql::sqlparser::ast::Statement::Query(tt) => match &tt.body {
+                    gluesql::sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
+                        gluesql::sqlparser::ast::TableFactor::Table {
+                            name,
+                            alias: _,
+                            args: _,
+                            with_hints: _,
+                        } => {
+                            let tablename = &name.0[0].value;
+                            return self._run_query(tablename.clone(), query);
+                        }
+                        _ => return Err(format!("No table found")),
+                    },
+                    _ => return Err(format!("Invalid SELECT statement: {}", tt.body)),
+                },
+                _ => return Err(format!("Unknown query: {}", t[0])),
+            },
+            Err(e) => return Err(format!("Improper query: {}", e)),
+        }
+    }
+
+    pub fn get_measurement_range(
+        &mut self,
+        timeseries_name: String,
+        start_key: i64,
+        end_key: i64,
+    ) -> Result<Vec<Measurement>, String> {
+        let storage = self
+            .storages
+            .lock()
+            .unwrap()
+            .get(&timeseries_name.clone())
+            .unwrap()
+            .clone();
+        let mut db = Glue::new(storage.clone());
+        let query = format!(
+            "SELECT key, id, created_at, name, value, tags from {} WHERE key >= {} AND key <= {}",
+            timeseries_name, start_key, end_key
+        );
+        // fetch or create the db handler
+        match db.execute(&query) {
+            Ok(payload) => match self._parse_select_payload(payload) {
+                Ok(ev) => return Ok(vec![ev]),
+                Err(e) => Err(format!("Error parsing data: {}", e)),
+            },
+            Err(e) => match e {
+                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
+                    return Err(format!("Table not found: {}", a));
+                }
+                _ => {
+                    return Err(format!("Error querying measurement: {}", timeseries_name));
+                }
+            },
+        }
+    }
     pub fn _parse_select_payload(&mut self, payload: Payload) -> Result<Measurement, String> {
         let rows = match payload {
             Payload::Select { labels: _, rows } => rows,
@@ -171,46 +246,6 @@ impl TimeseriesDiskPersistenceManager {
             tags: HashMap::new(), //tt,
         })
     }
-
-    // consider this insecure by design.
-    pub fn query_measurements(
-        &mut self,
-        // timeseries_name: String,
-        query: String,
-    ) -> Result<Vec<Measurement>, String> {
-        if query.to_uppercase().contains("INSERT")
-            || query.to_uppercase().contains("DELETE")
-            || query.to_uppercase().contains("UPDATE")
-            || query.to_uppercase().contains("DROP")
-            || query.to_uppercase().contains("CREATE")
-        {
-            return Err(format!("Invalid query {}", query));
-        }
-
-        let psql = gluesql::parse_sql::parse(&query);
-        match psql {
-            Ok(t) => match &t[0] {
-                gluesql::sqlparser::ast::Statement::Query(tt) => match &tt.body {
-                    gluesql::sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
-                        gluesql::sqlparser::ast::TableFactor::Table {
-                            name,
-                            alias: _,
-                            args: _,
-                            with_hints: _,
-                        } => {
-                            let tablename = &name.0[0].value;
-                            return self._run_query(tablename.clone(), query);
-                        }
-                        _ => return Err(format!("No table found")),
-                    },
-                    _ => return Err(format!("Invalid SELECT statement: {}", tt.body)),
-                },
-                _ => return Err(format!("Unknown query: {}", t[0])),
-            },
-            Err(e) => return Err(format!("Improper query: {}", e)),
-        }
-    }
-
     fn _run_query(&mut self, ts_name: String, query: String) -> Result<Vec<Measurement>, String> {
         let storage = self.storages.lock().unwrap().get(&ts_name).unwrap().clone();
         let mut db = Glue::new(storage.clone());
@@ -237,72 +272,6 @@ impl TimeseriesDiskPersistenceManager {
             },
         }
     }
-    pub fn get_measurement_range(
-        &mut self,
-        timeseries_name: String,
-        start_key: i64,
-        end_key: i64,
-    ) -> Result<Vec<Measurement>, String> {
-        let storage = self
-            .storages
-            .lock()
-            .unwrap()
-            .get(&timeseries_name.clone())
-            .unwrap()
-            .clone();
-        let mut db = Glue::new(storage.clone());
-        let query = format!(
-            "SELECT key, id, value, tags from {} WHERE key >= {} AND key <= {}",
-            timeseries_name, start_key, end_key
-        );
-        // fetch or create the db handler
-        match db.execute(&query) {
-            Ok(payload) => match self._parse_select_payload(payload) {
-                Ok(ev) => return Ok(vec![ev]),
-                Err(e) => Err(format!("Error parsing data: {}", e)),
-            },
-            Err(e) => match e {
-                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
-                    return Err(format!("Table not found: {}", a));
-                }
-                _ => {
-                    return Err(format!("Error querying measurement: {}", timeseries_name));
-                }
-            },
-        }
-    }
-
-    pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
-        // let mut pb = PathBuf::new();
-        // pb.push(&self.root_path);
-        // pb.push(timeseries_name.clone());
-        // let path = pb.to_str();
-
-        // wrap sledstorage around a new Glue obj before using it:
-        // let mut database = Glue::new(storage);
-        let ts_tablename = timeseries_name.split("/").last().unwrap();
-        self.timeseries_path
-            .insert(ts_tablename.into(), timeseries_name.clone());
-        println!(
-            "tablename: {} path: {}",
-            ts_tablename,
-            timeseries_name.clone()
-        );
-        match SledStorage::new(&timeseries_name) {
-            Ok(ss) => {
-                self.storages
-                    .lock()
-                    .unwrap()
-                    .insert(timeseries_name.clone(), ss.clone());
-                self._check_db_schema(ts_tablename.into(), ss.clone(), true)
-                    .unwrap();
-                Ok(true)
-            }
-            // run CREATE statement if the table does not exists
-            // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);"
-            Err(e) => (return Err(format!("Error creating storage {}", e))),
-        }
-    }
 
     fn _check_db_schema(
         &mut self,
@@ -318,9 +287,9 @@ impl TimeseriesDiskPersistenceManager {
                     if !create {
                         return Err(format!("table fetch not found {:?} -> {}", a, query));
                     } else {
-                        // "CREATE TABLE <timeseries_name>_data (id UUID, time TIMESTAMP, value FLOAT, tags MAP);"
+                        // "CREATE TABLE <timeseries_name> (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
                         let query_create = format!(
-                            "CREATE TABLE {} (id UUID, time TIMESTAMP, value FLOAT, tags MAP);",
+                            "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
                             timeseries_name
                         );
                         match db.execute(&query_create) {
@@ -344,6 +313,29 @@ impl TimeseriesDiskPersistenceManager {
         };
     }
 
+    pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
+        let ts_tablename = timeseries_name.split("/").last().unwrap();
+        self.timeseries_path
+            .insert(ts_tablename.into(), timeseries_name.clone());
+        debug!(
+            "tablename: {} path: {}",
+            ts_tablename,
+            timeseries_name.clone()
+        );
+        match SledStorage::new(&timeseries_name) {
+            Ok(ss) => {
+                self.storages
+                    .lock()
+                    .unwrap()
+                    .insert(timeseries_name.clone(), ss.clone());
+                self._check_db_schema(ts_tablename.into(), ss.clone(), true)
+                    .unwrap();
+                Ok(true)
+            }
+            Err(e) => (return Err(format!("Error creating storage {}", e))),
+        }
+    }
+
     fn load_persistence(&mut self) {
         let dir = Path::new(&self.basepath);
         if dir.is_dir() {
@@ -351,7 +343,7 @@ impl TimeseriesDiskPersistenceManager {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     let timeseries_name = path.to_str().unwrap().to_string();
-                    println!(
+                    debug!(
                         "Loading db {} - {:?}",
                         timeseries_name.clone(),
                         self.basepath
