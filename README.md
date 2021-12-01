@@ -52,7 +52,7 @@ Within the ```databases``` (root directory), a new sled database will be created
 
 ```"CREATE TABLE <timeseries_name> (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",```
 
-TODO: Immutable data: measurements can't be changed
-TODO: separated tag table: "CREATE TABLE <timeseries_name>_tags (id UUID, key TEXT, value TEXT);",
-TODO: ensure immutability is enforced through measurement id or fingerprint
-TODO: Pre-calculated stats for each series
+    * TODO: Immutable data: measurements can't be changed
+    * TODO: separated tag table: "CREATE TABLE <timeseries_name>_tags (id UUID, key TEXT, value TEXT);",
+    * TODO: ensure immutability is enforced through measurement id or fingerprint
+    * TODO: Pre-calculated stats for each series
