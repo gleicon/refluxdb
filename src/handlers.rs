@@ -36,6 +36,7 @@ async fn query_timeseries_range(
     ts: web::Path<TimeseriesInfo>,
     data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
+    // sanitize query strings, check if the data type is really datetime
     let st = info.start.parse::<DateTime<Utc>>().unwrap();
     let en = info.end.parse::<DateTime<Utc>>().unwrap();
     let mut pm = data.lock().unwrap().clone();

@@ -1,8 +1,8 @@
-use chrono::Local;
+use chrono::{DateTime, Local};
 use gluesql::executor::{EvaluateError, ExecuteError, FetchError};
 use gluesql::prelude::*;
 
-use log::debug;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -78,23 +78,25 @@ impl TimeseriesDiskPersistenceManager {
         value: f64,
         tags: HashMap<String, String>,
     ) -> Result<Measurement, String> {
-        let storage = self
-            .storages
-            .lock()
-            .unwrap()
-            .get(&timeseries_name.clone())
-            .unwrap()
-            .clone();
+        let ss = self.storages.lock().unwrap();
+        let storage = match ss.get(&timeseries_name.clone()) {
+            Some(s) => s,
+            None => return Err(format!("No storage found")),
+        };
 
         let mut db = Glue::new(storage.clone());
         let uuid = Uuid::new_v4();
-        let now = Local::now().timestamp_millis();
+        let now = Local::now();
+        let now_dt = now.to_rfc3339(); //timestamp_millis();
         let tags_json = serde_json::to_string(&tags);
         let query = format!(
-            "INSERT INTO {} VALUES ({}, {}, {}, {})",
+            // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+            "INSERT INTO {} VALUES ('{}', '{}', '{}', '{}', {}, '{}')",
             timeseries_name,
-            uuid,
-            now,
+            uuid, //.as_u128(),
+            now_dt,
+            now_dt,
+            name,
             value,
             tags_json.unwrap()
         );
@@ -102,14 +104,14 @@ impl TimeseriesDiskPersistenceManager {
             Ok(result) => {
                 debug!("{:?}", result);
                 let ev = Measurement {
-                    key: now.clone(),
+                    key: now.clone().timestamp_millis(),
                     id: uuid.clone(),
                     value: value.clone(),
                     tags: tags.clone(),
                 };
                 return Ok(ev);
             }
-            Err(e) => return Err(format!("Error saving measurement: {}", e)),
+            Err(e) => return Err(format!("Error saving measurement: {} {}", e, query.clone())),
         }
     }
 
@@ -222,25 +224,26 @@ impl TimeseriesDiskPersistenceManager {
         &mut self,
         row: &std::vec::Vec<gluesql::data::Value>,
     ) -> Result<Measurement, String> {
-        let key = match &row[0] {
-            Value::I64(key) => key,
-            val => return Err(format!("Unexpected value: {:?}", val)),
+        // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+        let id = match &row[0] {
+            Value::Uuid(i) => i,
+            val => return Err(format!("Unexpected uuid value: {:?}", val)),
         };
-        let id = match &row[1] {
-            Value::Uuid(id) => id,
-            val => return Err(format!("Unexpected value: {:?}", val)),
+        let key = match &row[1] {
+            Value::Timestamp(key) => key,
+            val => return Err(format!("Unexpected timestamp value: {:?}", val)),
         };
-        let value = match &row[2] {
+        let value = match &row[4] {
             Value::F64(value) => value,
             val => return Err(format!("Unexpected value: {:?}", val)),
         };
-        let tt = match &row[3] {
+        let _ = match &row[5] {
             Value::Map(tags) => tags,
             //   _ => HashMap::new(), // TODO: temp mock
-            val => return Err(format!("Unexpected value: {:?}", val)),
+            val => return Err(format!("Unexpected tag value: {:?}", val)),
         };
         Ok(Measurement {
-            key: key.clone(),
+            key: key.timestamp_millis().clone(),
             id: Uuid::from_u128(id.clone()),
             value: value.clone(),
             tags: HashMap::new(), //tt,
@@ -299,8 +302,13 @@ impl TimeseriesDiskPersistenceManager {
                                     timeseries_name, ei, query_create
                                 ));
                             }
-                            Ok(_) => {
-                                return Ok(format!("Database {} created", timeseries_name.clone()));
+                            Ok(a) => {
+                                info!("{:?}", a);
+                                return Ok(format!(
+                                    "Database {} created: {:?}",
+                                    timeseries_name.clone(),
+                                    a
+                                ));
                             }
                         };
                     }
@@ -309,7 +317,13 @@ impl TimeseriesDiskPersistenceManager {
                     return Err(format!("query error: {} - {:?}", query, e));
                 }
             },
-            _ => return Ok(format!("Database {} loaded", timeseries_name.clone())),
+            Ok(a) => {
+                return Ok(format!(
+                    "database: {} check result {:?}",
+                    timeseries_name.clone(),
+                    a
+                ))
+            }
         };
     }
 
@@ -317,19 +331,21 @@ impl TimeseriesDiskPersistenceManager {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
         self.timeseries_path
             .insert(ts_tablename.into(), timeseries_name.clone());
-        debug!(
-            "tablename: {} path: {}",
+        info!(
+            "db name: {} path: {}",
             ts_tablename,
             timeseries_name.clone()
         );
-        match SledStorage::new(&timeseries_name) {
+        match SledStorage::new(&timeseries_name.clone()) {
             Ok(ss) => {
                 self.storages
                     .lock()
                     .unwrap()
-                    .insert(timeseries_name.clone(), ss.clone());
-                self._check_db_schema(ts_tablename.into(), ss.clone(), true)
-                    .unwrap();
+                    .insert(ts_tablename.into(), ss.clone());
+                match self._check_db_schema(ts_tablename.into(), ss.clone(), true) {
+                    Ok(db) => info!("Database {} consistent and loaded", db),
+                    Err(e) => info!("Error checking db: {}", e),
+                }
                 Ok(true)
             }
             Err(e) => (return Err(format!("Error creating storage {}", e))),
@@ -343,10 +359,10 @@ impl TimeseriesDiskPersistenceManager {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     let timeseries_name = path.to_str().unwrap().to_string();
-                    debug!(
+                    info!(
                         "Loading db {} - {:?}",
+                        self.basepath,
                         timeseries_name.clone(),
-                        self.basepath
                     );
                     self.load_or_create_database(timeseries_name).unwrap();
                 };

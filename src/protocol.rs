@@ -1,7 +1,7 @@
 use chrono::Local;
 use indexmap::IndexMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LineProtocol {
     pub measurement_name: String,
     pub tag_set: IndexMap<String, String>,
