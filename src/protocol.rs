@@ -1,12 +1,12 @@
 use chrono::Local;
 use indexmap::IndexMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LineProtocol {
-    measurement_name: String,
-    tag_set: IndexMap<String, String>,
-    field_set: IndexMap<String, String>,
-    timestamp: i64,
+    pub measurement_name: String,
+    pub tag_set: IndexMap<String, String>,
+    pub field_set: IndexMap<String, f64>,
+    pub timestamp: i64,
 }
 
 impl Default for LineProtocol {
@@ -21,15 +21,15 @@ impl Default for LineProtocol {
 }
 
 impl LineProtocol {
-    pub fn new(measurement_name: String) -> Self {
-        let s = Self {
-            measurement_name: measurement_name,
-            tag_set: IndexMap::new(),
-            field_set: IndexMap::new(),
-            timestamp: Local::now().timestamp(),
-        };
-        return s;
-    }
+    // pub fn new(measurement_name: String) -> Self {
+    //     let s = Self {
+    //         measurement_name: measurement_name,
+    //         tag_set: IndexMap::new(),
+    //         field_set: IndexMap::new(),
+    //         timestamp: Local::now().timestamp(),
+    //     };
+    //     return s;
+    // }
 
     pub fn tag(&mut self, key: String, value: String) {
         if key.len() > 0 && value.len() > 0 {
@@ -39,7 +39,7 @@ impl LineProtocol {
 
     pub fn field(&mut self, key: String, value: String) {
         if key.len() > 0 && value.len() > 0 {
-            self.field_set.insert(key, value);
+            self.field_set.insert(key, value.parse().unwrap());
         }
     }
 
