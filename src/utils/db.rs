@@ -5,7 +5,9 @@ use log::info;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub fn parse_select_payload(payload: Payload) -> Result<crate::persistence::Measurement, String> {
+pub fn parse_select_payload(
+    payload: Payload,
+) -> Result<Vec<crate::persistence::Measurement>, String> {
     let rows = match payload {
         Payload::Select { labels: _, rows } => rows,
         _ => return Err(format!("Unexpected result: {:?}", payload)),
@@ -13,29 +15,14 @@ pub fn parse_select_payload(payload: Payload) -> Result<crate::persistence::Meas
     if rows.len() == 0 {
         return Err(format!("No data found for query"));
     };
-    parse_select_resultset_row(&rows[0])
-}
-
-pub fn parse_select_payload_range(
-    payload: &Payload,
-) -> Result<Vec<crate::persistence::Measurement>, String> {
-    let rows = match payload {
-        Payload::Select { labels: _, rows } => rows,
-        _ => return Err(format!("Unexpected result: {:?}", payload)),
-    };
-    let ev: Vec<crate::persistence::Measurement> = Vec::new();
-
-    if rows.len() == 0 {
-        //return Err(format!("No data found for query"));
-        return Ok(ev);
-    };
     let mut ev: Vec<crate::persistence::Measurement> = Vec::new();
-
     for row in rows {
-        match parse_select_resultset_row(row) {
-            Ok(e) => ev.push(e),
-            Err(e) => return Err(format!("Error parsing range: {}", e)),
-        }
+        match parse_select_resultset_row(&row) {
+            Ok(es) => {
+                ev.push(es);
+            }
+            Err(e) => return Err(format!("Error parsing data: {}", e)),
+        };
     }
     Ok(ev)
 }
@@ -58,7 +45,6 @@ pub fn parse_select_resultset_row(
     };
     let _ = match &row[5] {
         Value::Map(tags) => tags,
-        //   _ => HashMap::new(), // TODO: temp mock
         val => return Err(format!("Unexpected tag value: {:?}", val)),
     };
     Ok(crate::persistence::Measurement {
@@ -68,8 +54,10 @@ pub fn parse_select_resultset_row(
         tags: HashMap::new(), //tt,
     })
 }
-
-pub fn check_db_schema(
+/*
+Check if a sled storage exists and if the timeseries schema is created. Optionally create it if create is set to true.
+ */
+pub fn check_or_create_database(
     timeseries_name: String,
     storage: gluesql::storages::SledStorage,
     create: bool,

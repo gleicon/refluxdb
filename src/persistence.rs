@@ -70,6 +70,16 @@ impl TimeseriesDiskPersistenceManager {
     pub fn timeseries_exists(self, ts_name: String) -> bool {
         return self.timeseries_path.contains_key(&ts_name);
     }
+    pub fn check_database(
+        self,
+        timeseries_name: String,
+    ) -> Result<gluesql::storages::SledStorage, String> {
+        let ss = self.storages.lock().unwrap();
+        match ss.get(&timeseries_name.clone()) {
+            Some(s) => Ok(s.clone()),
+            None => Err(format!("No storage found")),
+        } // uses check_db_schema to create a newdb + mkdir
+    }
 
     // TODO: implement tags
     pub fn save_measurement(
@@ -79,41 +89,42 @@ impl TimeseriesDiskPersistenceManager {
         value: f64,
         tags: HashMap<String, String>,
     ) -> Result<Measurement, String> {
-        let ss = self.storages.lock().unwrap();
-        let storage = match ss.get(&timeseries_name.clone()) {
-            Some(s) => s,
-            None => return Err(format!("No storage found")),
-        };
-
-        let mut db = Glue::new(storage.clone());
-        let uuid = Uuid::new_v4();
-        let now = Local::now();
-        let now_dt = now.to_rfc3339(); //timestamp_millis();
-        let tags_json = serde_json::to_string(&tags);
-        let query = format!(
-            // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
-            "INSERT INTO {} VALUES ('{}', '{}', '{}', '{}', {}, '{}')",
-            timeseries_name,
-            uuid, //.as_u128(),
-            now_dt,
-            now_dt,
-            name,
-            value,
-            tags_json.unwrap()
-        );
-        match db.execute(&query) {
-            Ok(result) => {
-                debug!("{:?}", result);
-                let ev = Measurement {
-                    key: now.clone().timestamp_millis(),
-                    id: uuid.clone(),
-                    value: value.clone(),
-                    tags: tags.clone(),
-                };
-                return Ok(ev);
+        match self.clone().check_database(timeseries_name.clone()) {
+            Ok(storage) => {
+                let mut db = Glue::new(storage.clone());
+                let uuid = Uuid::new_v4();
+                let now = Local::now();
+                let now_dt = now.to_rfc3339(); //timestamp_millis();
+                let tags_json = serde_json::to_string(&tags);
+                let query = format!(
+                    // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+                    "INSERT INTO {} VALUES ('{}', '{}', '{}', '{}', {}, '{}')",
+                    timeseries_name,
+                    uuid, //.as_u128(),
+                    now_dt,
+                    now_dt,
+                    name,
+                    value,
+                    tags_json.unwrap()
+                );
+                match db.execute(&query) {
+                    Ok(result) => {
+                        debug!("{:?}", result);
+                        let ev = Measurement {
+                            key: now.clone().timestamp_millis(),
+                            id: uuid.clone(),
+                            value: value.clone(),
+                            tags: tags.clone(),
+                        };
+                        return Ok(ev);
+                    }
+                    Err(e) => {
+                        return Err(format!("Error saving measurement: {} {}", e, query.clone()))
+                    }
+                }
             }
-            Err(e) => return Err(format!("Error saving measurement: {} {}", e, query.clone())),
-        }
+            Err(e) => return Err(format!("Error checking database {}", e)),
+        };
     }
 
     // consider this insecure by design. the timeseries name comes with the query string :grin:
@@ -150,41 +161,36 @@ impl TimeseriesDiskPersistenceManager {
             Err(e) => return Err(format!("Improper query: {}", e)),
         }
     }
-
     pub fn get_measurement_range(
         &mut self,
         timeseries_name: String,
         start_key: i64,
         end_key: i64,
     ) -> Result<Vec<Measurement>, String> {
-        let storage = self
-            .storages
-            .lock()
-            .unwrap()
-            .get(&timeseries_name.clone())
-            .unwrap()
-            .clone();
-        let mut db = Glue::new(storage.clone());
-        let query = format!(
-            "SELECT key, id, created_at, name, value, tags from {} WHERE key >= {} AND key <= {}",
-            timeseries_name, start_key, end_key
-        );
-        // fetch or create the db handler
-        match db.execute(&query) {
-            Ok(payload) => match db::parse_select_payload(payload) {
-                Ok(ev) => return Ok(vec![ev]),
-                Err(e) => Err(format!("Error parsing data: {}", e)),
-            },
-            Err(e) => match e {
-                gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
-                    return Err(format!("Table not found: {}", a));
+        match self.clone().check_database(timeseries_name.clone()).clone() {
+            Ok(storage) => {
+                let mut db = Glue::new(storage.clone());
+                let query = format!(
+                    "SELECT key, id, created_at, name, value, tags from {} WHERE key >= {} AND key <= {}",
+                    timeseries_name, start_key, end_key
+                );
+                // fetch or create the db handler
+                match db.execute(&query) {
+                    Ok(payload) => return db::parse_select_payload(payload),
+                    Err(e) => match e {
+                        gluesql::result::Error::Fetch(FetchError::TableNotFound(a)) => {
+                            return Err(format!("Table not found: {}", a));
+                        }
+                        _ => {
+                            return Err(format!("Error querying measurement: {}", timeseries_name));
+                        }
+                    },
                 }
-                _ => {
-                    return Err(format!("Error querying measurement: {}", timeseries_name));
-                }
-            },
-        }
+            }
+            Err(e) => return Err(format!("Error checking database {}", e)),
+        };
     }
+
     fn _run_query(&mut self, ts_name: String, query: String) -> Result<Vec<Measurement>, String> {
         let storage = self.storages.lock().unwrap().get(&ts_name).unwrap().clone();
         let mut db = Glue::new(storage.clone());
@@ -205,30 +211,30 @@ impl TimeseriesDiskPersistenceManager {
                     return Err(format!("query error: {:?}", e));
                 }
             },
-            Ok(payload) => match db::parse_select_payload(payload) {
-                Ok(ev) => return Ok(vec![ev]),
-                Err(e) => Err(format!("Error parsing data: {}", e)),
-            },
+            Ok(payload) => db::parse_select_payload(payload),
         }
     }
 
     pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
-        self.timeseries_path
-            .insert(ts_tablename.into(), timeseries_name.clone());
-        info!(
-            "db name: {} path: {}",
-            ts_tablename,
-            timeseries_name.clone()
-        );
+
         match SledStorage::new(&timeseries_name.clone()) {
             Ok(ss) => {
-                self.storages
-                    .lock()
-                    .unwrap()
-                    .insert(ts_tablename.into(), ss.clone());
-                match db::check_db_schema(ts_tablename.into(), ss.clone(), true) {
-                    Ok(db) => info!("Database {} consistent and loaded", db),
+                match db::check_or_create_database(ts_tablename.into(), ss.clone(), true) {
+                    Ok(db) => {
+                        self.storages
+                            .lock()
+                            .unwrap()
+                            .insert(ts_tablename.into(), ss.clone());
+                        self.timeseries_path
+                            .insert(ts_tablename.into(), timeseries_name.clone());
+                        info!(
+                            "db name: {} path: {} - {}",
+                            ts_tablename,
+                            timeseries_name.clone(),
+                            db
+                        );
+                    }
                     Err(e) => info!("Error checking db: {}", e),
                 }
                 Ok(true)
