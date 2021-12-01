@@ -2,6 +2,7 @@ use actix_web::{get, post, web, Error, HttpResponse, Result};
 use chrono::{DateTime, Utc};
 use log::{debug, info};
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 #[derive(Deserialize, Clone)]
@@ -104,6 +105,32 @@ async fn write_timeseries(
     match crate::protocol::LineProtocol::parse(req_body.clone()) {
         Ok(b) => {
             // persist
+            let mut htags: HashMap<String, String> = HashMap::new();
+            for key in b.tag_set.clone().keys() {
+                htags.insert(key.into(), b.tag_set.get(key).unwrap().into());
+            }
+            // One line for each measurement, represented b field_set
+            for field in b.field_set.clone() {
+                match pm.lock().unwrap().save_measurement(
+                    b.measurement_name.clone(),
+                    field.0.clone(),
+                    field.1.clone(),
+                    htags.clone(),
+                ) {
+                    Ok(_) => info!(
+                        "Timeseries {} Measurement {} value {}",
+                        b.measurement_name.clone(),
+                        field.0.clone(),
+                        field.1.clone()
+                    ),
+                    Err(e) => {
+                        info!("Error writing measurement: {}", e);
+                        return Ok(HttpResponse::BadRequest()
+                            .content_type("application/json")
+                            .json(format!("Error writing measurement: {}", e)));
+                    }
+                };
+            }
             return Ok(HttpResponse::Ok()
                 .content_type("application/json")
                 .json(format!("{:?}", b)));
@@ -111,7 +138,7 @@ async fn write_timeseries(
         Err(e) => {
             return Ok(HttpResponse::BadRequest()
                 .content_type("application/json")
-                .json(format!("{}", e)));
+                .json(format!("Error parsing protocol: {}", e)));
         }
     }
 }

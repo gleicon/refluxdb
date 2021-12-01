@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local};
+use chrono::Local;
 use gluesql::executor::{EvaluateError, ExecuteError, FetchError};
 use gluesql::prelude::*;
 
