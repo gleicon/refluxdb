@@ -137,28 +137,13 @@ impl TimeseriesDiskPersistenceManager {
         {
             return Err(format!("Invalid query {}", query));
         }
-
-        let psql = gluesql::parse_sql::parse(&query);
-        match psql {
-            Ok(t) => match &t[0] {
-                gluesql::sqlparser::ast::Statement::Query(tt) => match &tt.body {
-                    gluesql::sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
-                        gluesql::sqlparser::ast::TableFactor::Table {
-                            name,
-                            alias: _,
-                            args: _,
-                            with_hints: _,
-                        } => {
-                            let tablename = &name.0[0].value;
-                            return self._run_query(tablename.clone(), query);
-                        }
-                        _ => return Err(format!("No table found")),
-                    },
-                    _ => return Err(format!("Invalid SELECT statement: {}", tt.body)),
-                },
-                _ => return Err(format!("Unknown query: {}", t[0])),
-            },
-            Err(e) => return Err(format!("Improper query: {}", e)),
+        match db::query_statement_tablename(query.clone()) {
+            Ok(tablename) => {
+                return self._run_query(tablename.clone(), query.clone());
+            }
+            Err(e) => {
+                return Err(format!("Validator error: {}", e));
+            }
         }
     }
     pub fn get_measurement_range(
@@ -251,7 +236,7 @@ impl TimeseriesDiskPersistenceManager {
                 if path.is_dir() {
                     let timeseries_name = path.to_str().unwrap().to_string();
                     info!(
-                        "Loading db {} - {:?}",
+                        "Loading databases basepath:{} - ts db:{:?}",
                         self.basepath,
                         timeseries_name.clone(),
                     );

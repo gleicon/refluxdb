@@ -106,3 +106,27 @@ pub fn check_or_create_database(
         }
     };
 }
+
+pub fn query_statement_tablename(query: String) -> Result<String, String> {
+    match gluesql::parse_sql::parse(&query) {
+        Ok(t) => match &t[0] {
+            gluesql::sqlparser::ast::Statement::Query(tt) => match &tt.body {
+                gluesql::sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
+                    gluesql::sqlparser::ast::TableFactor::Table {
+                        name,
+                        alias: _,
+                        args: _,
+                        with_hints: _,
+                    } => {
+                        let tablename = &name.0[0].value;
+                        Ok(tablename.clone())
+                    }
+                    _ => return Err(format!("No table found")),
+                },
+                _ => return Err(format!("Invalid SELECT statement: {}", tt.body)),
+            },
+            _ => return Err(format!("Unknown query: {}", t[0])),
+        },
+        Err(e) => return Err(format!("Improper query: {}", e)),
+    }
+}
