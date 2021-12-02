@@ -8,6 +8,7 @@ mod handlers;
 mod persistence;
 mod protocol;
 mod udpserver;
+mod utils;
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
