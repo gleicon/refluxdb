@@ -73,12 +73,26 @@ impl TimeseriesDiskPersistenceManager {
     pub fn check_database(
         self,
         timeseries_name: String,
+        create_if_not_exists: bool,
     ) -> Result<gluesql::storages::SledStorage, String> {
         let ss = self.storages.lock().unwrap();
         match ss.get(&timeseries_name.clone()) {
             Some(s) => Ok(s.clone()),
-            None => Err(format!("No storage found")),
-        } // uses check_db_schema to create a newdb + mkdir
+            None => {
+                if create_if_not_exists {
+                    let ts_path = format!("{}/{}", self.basepath, timeseries_name);
+                    info!("Creating db {}", ts_path);
+
+                    fs::create_dir(ts_path.clone());
+
+                    return match self.load_or_create_database(ts_path) {
+                        Ok(d) => info!("db {} created and checked", d),
+                        Err(e) => info!("error creating db {}", e),
+                    };
+                };
+                Err(format!("No storage found"))
+            }
+        }
     }
 
     // TODO: implement tags
@@ -88,8 +102,9 @@ impl TimeseriesDiskPersistenceManager {
         name: String,
         value: f64,
         tags: HashMap<String, String>,
+        create_database: bool,
     ) -> Result<Measurement, String> {
-        match self.clone().check_database(timeseries_name.clone()) {
+        match self.clone().check_database(timeseries_name.clone(), true) {
             Ok(storage) => {
                 let mut db = Glue::new(storage.clone());
                 let uuid = Uuid::new_v4();
@@ -152,7 +167,11 @@ impl TimeseriesDiskPersistenceManager {
         start_key: i64,
         end_key: i64,
     ) -> Result<Vec<Measurement>, String> {
-        match self.clone().check_database(timeseries_name.clone()).clone() {
+        match self
+            .clone()
+            .check_database(timeseries_name.clone(), false) // only if the database exists, dont create it otherwise
+            .clone()
+        {
             Ok(storage) => {
                 let mut db = Glue::new(storage.clone());
                 let query = format!(

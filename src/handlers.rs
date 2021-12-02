@@ -116,6 +116,7 @@ async fn write_timeseries(
                     field.0.clone(),
                     field.1.clone(),
                     htags.clone(),
+                    true, // create db if it doesn't exists
                 ) {
                     Ok(_) => info!(
                         "Timeseries {} Measurement {} value {}",
