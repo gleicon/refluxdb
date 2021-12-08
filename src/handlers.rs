@@ -23,7 +23,7 @@ struct FormData {
 
 #[get("/")]
 async fn list_timeseries(
-    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
+    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     let res = pm.lock().unwrap().clone().list_timeseries().unwrap();
     return Ok(HttpResponse::Ok()
@@ -35,7 +35,7 @@ async fn list_timeseries(
 async fn query_timeseries_range(
     web::Query(info): web::Query<RangeQueryRequest>, // ?start=time&end=time
     ts: web::Path<TimeseriesInfo>,
-    data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
+    data: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     // sanitize query strings, check if the data type is really datetime
     let st = info.start.parse::<DateTime<Utc>>().unwrap();
@@ -46,11 +46,13 @@ async fn query_timeseries_range(
             .content_type("application/json")
             .body(format!("Timeseries not found: {}", ts.timeseries.clone())));
     }
-    let measurement_range = pm.get_measurement_range(
-        ts.timeseries.clone(),
-        st.timestamp_millis(),
-        en.timestamp_millis(),
-    );
+    let measurement_range = pm
+        .get_measurement_range(
+            ts.timeseries.clone(),
+            st.timestamp_millis(),
+            en.timestamp_millis(),
+        )
+        .await;
     match measurement_range {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -70,13 +72,13 @@ async fn query_timeseries_range(
 #[post("/query")]
 async fn query_timeseries(
     form: web::Form<FormData>,
-    data: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
+    data: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     // q -> query string
     let qs = form.q.clone();
     debug!("query string: {}", format!("{:?}", qs));
     let mut pm = data.lock().unwrap().clone();
-    let pme = pm.query_measurements(qs.to_string());
+    let pme = pm.query_measurements(qs.to_string()).await;
     match pme {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -100,7 +102,7 @@ async fn query_timeseries(
 #[post("/write")]
 async fn write_timeseries(
     req_body: String,
-    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>>,
+    pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
     match crate::protocol::LineProtocol::parse(req_body.clone()) {
         Ok(b) => {
@@ -111,13 +113,18 @@ async fn write_timeseries(
             }
             // One line for each measurement, represented b field_set
             for field in b.field_set.clone() {
-                match pm.lock().unwrap().save_measurement(
-                    b.measurement_name.clone(),
-                    field.0.clone(),
-                    field.1.clone(),
-                    htags.clone(),
-                    true, // create db if it doesn't exists
-                ) {
+                match pm
+                    .lock()
+                    .unwrap()
+                    .save_measurement(
+                        b.measurement_name.clone(),
+                        field.0.clone(),
+                        field.1.clone(),
+                        htags.clone(),
+                        true, // create db if it doesn't exists
+                    )
+                    .await
+                {
                     Ok(_) => info!(
                         "Timeseries {} Measurement {} value {}",
                         b.measurement_name.clone(),

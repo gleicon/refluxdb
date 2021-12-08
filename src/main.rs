@@ -20,9 +20,9 @@ async fn main() -> std::io::Result<()> {
     let db_dir = "databases";
 
     let addr = "127.0.0.1:8089".to_string();
-    let pm = Arc::new(Mutex::new(
-        persistence::TimeseriesDiskPersistenceManager::new(db_dir.to_string()),
-    ));
+    let pm = Arc::new(Mutex::new(persistence::TimeseriesPersistenceManager::new(
+        db_dir.to_string(),
+    )));
     let data = web::Data::new(pm.clone());
 
     let _task = actix_rt::spawn(async move {

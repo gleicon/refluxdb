@@ -9,7 +9,7 @@ pub struct UDPRefluxServer {
     pub socket: UdpSocket,
     buf: Vec<u8>,
     to_send: Option<(usize, SocketAddr)>,
-    pm: Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
+    pm: Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>,
 }
 
 impl UDPRefluxServer {
@@ -91,7 +91,7 @@ impl UDPRefluxServer {
     }
     pub async fn new(
         addr: String,
-        pm: Arc<Mutex<crate::persistence::TimeseriesDiskPersistenceManager>>,
+        pm: Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>,
     ) -> Self {
         let socket = UdpSocket::bind(&addr).await.unwrap();
         info!("Listening on UDP: {}", socket.local_addr().unwrap());
