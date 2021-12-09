@@ -1,6 +1,5 @@
 use arrow::record_batch::RecordBatch;
 use chrono::Local;
-use futures::StreamExt;
 
 use crate::utils::db;
 use log::{debug, info};
@@ -39,7 +38,6 @@ use uuid::Uuid;
 pub struct TimeseriesPersistenceManager {
     pub basepath: String,
     pub storages: Arc<Mutex<HashMap<String, crate::utils::filemanager::ParquetFileManager>>>,
-    pub execution_contexts: Arc<Mutex<HashMap<String, datafusion::prelude::ExecutionContext>>>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -64,43 +62,44 @@ impl TimeseriesPersistenceManager {
         return Ok(databases.clone());
     }
 
-    pub async fn describe(&mut self, database: String) {
-        for (k, _v) in self.storages.lock().unwrap().iter() {
-            let qq = format!("SHOW COLUMNS FROM {}", k.clone());
-            println!(
-                "{}",
-                format!(
-                    "db: {} - columns {}",
-                    k.clone(),
-                    self.query(qq).await.unwrap()
-                )
-            );
-        }
-    }
+    // pub async fn describe(&mut self, database: String) {
+    //     let tables = self.storages.lock().unwrap();
+    //     for k in tables.keys() {
+    //         let qq = format!("SHOW COLUMNS FROM {}", k.clone());
+    //         let tablename = k;
+    //         match self.query(qq.clone(), tablename.to_string()).await {
+    //             Ok(r) => {println!("{}", format!("{:?}", r));}
+    //             Err(e) => {println!("{}", format!("{:?}", e));}
+    //         }
+    //     }
+    // }
 
     pub fn timeseries_exists(self, ts_name: String) -> bool {
         return self.storages.lock().unwrap().contains_key(&ts_name);
     }
 
-    pub fn check_database(
+    pub async fn check_database(
         self,
         timeseries_name: String,
         create_if_not_exists: bool,
     ) -> Result<crate::utils::filemanager::ParquetFileManager, String> {
-        let ss = self.storages.lock().unwrap();
-        match ss.get(&timeseries_name.clone()) {
+        match self
+            .storages
+            .lock()
+            .unwrap()
+            .get_mut(&timeseries_name.clone())
+        {
             Some(s) => Ok(s.clone()),
             None => {
                 if create_if_not_exists {
                     let ts_path = format!("{}/{}", self.basepath, timeseries_name);
                     info!("Creating db {}", ts_path);
-
-                    return match self.load_or_create_database(ts_path) {
-                        Ok(d) => info!("db {} created and checked", d),
-                        Err(e) => info!("error creating db {}", e),
+                    match self.clone().load_or_create_database(ts_path.clone()).await {
+                        Ok(d) => return Ok(d),
+                        Err(e) => return Err(format!("error creating db {}", e)),
                     };
                 };
-                Err(format!("No storage found"))
+                return Err(format!("No storage found"));
             }
         }
     }
@@ -114,7 +113,11 @@ impl TimeseriesPersistenceManager {
         tags: HashMap<String, String>,
         create_database: bool,
     ) -> Result<Measurement, String> {
-        match self.clone().check_database(timeseries_name.clone(), true) {
+        match self
+            .clone()
+            .check_database(timeseries_name.clone(), create_database)
+            .await
+        {
             Ok(dbe) => {
                 let uuid = Uuid::new_v4();
                 let now = Local::now();
@@ -163,13 +166,14 @@ impl TimeseriesPersistenceManager {
         query: &str,
         filepath: &str,
     ) -> datafusion::error::Result<()> {
-        let ctx = self
-            .execution_contexts
+        let st = self
+            .storages
             .lock()
             .unwrap()
             .get(&timeseries)
             .unwrap()
             .clone();
+        let ctx = st.execution_context.clone();
         let logical_plan = ctx.create_logical_plan(&query).unwrap();
         let logical_plan = ctx.optimize(&logical_plan).unwrap();
         let physical_plan = ctx.create_physical_plan(&logical_plan).await.unwrap();
@@ -189,8 +193,27 @@ impl TimeseriesPersistenceManager {
 
         match db::query_statement_tablename(query.clone()) {
             Ok(tablename) => {
-                let r = self.query(tablename, query.clone()).await;
-                return Ok(r.unwrap());
+                match self.storages.lock().unwrap().get_mut(&tablename) {
+                    Some(pfm) => {
+                        return Ok(pfm
+                            .execution_context
+                            .sql(&query)
+                            .await
+                            .unwrap()
+                            .collect()
+                            .await
+                            .unwrap());
+                        // match pfm.execution_context.sql(&query).await{
+                        //     Ok(df) => {
+                        //         return Ok(df.collect().await.unwrap());
+                        //     },
+                        //     Err(e) => return Err(format!("Error querying: {}", e)),
+                        // }
+                    }
+                    None => return Err(format!("Error querying")),
+                }
+                // let r = self.query(tablename, query.clone()).await;
+                // return Ok(r.unwrap());
             }
             Err(e) => {
                 return Err(format!("Validator error: {}", e));
@@ -205,7 +228,8 @@ impl TimeseriesPersistenceManager {
     ) -> Result<Vec<RecordBatch>, String> {
         match self
             .clone()
-            .check_database(timeseries_name.clone(), false) // only if the database exists, dont create it otherwise
+            .check_database(timeseries_name.clone(), false)
+            .await
             .clone()
         {
             Ok(db) => {
@@ -214,62 +238,32 @@ impl TimeseriesPersistenceManager {
                     timeseries_name.clone(), start_key, end_key
                 );
                 // fetch or create the db handler
-                match self.query(timeseries_name.clone(), query).await {
-                    Ok(payload) => return Ok(payload), //return db::parse_select_payload(payload),
-                    Err(e) => {
-                        return Err(format!(
-                            "Error querying measurement: {}",
-                            timeseries_name.clone()
-                        ))
+                match db.clone().execution_context.sql(&query).await {
+                    Ok(df) => {
+                        return Ok(df.collect().await.unwrap());
                     }
-                };
+                    Err(e) => return Err(format!("Error querying: {}", e)),
+                }
             }
             Err(e) => return Err(format!("Error checking database {}", e)),
         };
     }
 
-    pub async fn query(
-        &mut self,
-        tablename: String,
-        query: String,
-    ) -> Result<Vec<RecordBatch>, String> {
-        let ctx = self
-            .execution_contexts
-            .lock()
-            .unwrap()
-            .get(&tablename)
-            .unwrap();
-        println!("query: {}", query);
-        // cargo run -- -d -f test_data/taxi_2019_04.parquet -q "SELECT count(*) FROM parquet_tables"
-        match ctx.sql(&query).await {
-            Ok(df) => {
-                let results: Vec<RecordBatch> = df.collect().await.unwrap();
-
-                return Ok(results);
-            }
-            Err(e) => return Err(format!("Error querying: {}", e)),
-        }
-    }
-
-    pub fn load_or_create_database(&mut self, timeseries_name: String) -> Result<bool, String> {
+    pub async fn load_or_create_database(
+        self,
+        timeseries_name: String,
+    ) -> Result<crate::utils::filemanager::ParquetFileManager, String> {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
 
-        let execution_config =
-            datafusion::prelude::ExecutionConfig::new().with_information_schema(true);
-
-        let mut pfm = crate::utils::ParquetFileManager::new(self.basepath.clone());
+        let pfm = crate::utils::ParquetFileManager::new(self.basepath.clone()).await;
         self.storages
             .lock()
             .unwrap()
             .insert(ts_tablename.into(), pfm.clone());
-        self.execution_contexts
-            .lock()
-            .unwrap()
-            .insert(ts_tablename.into(), pfm.execution_context.clone());
-        Ok(true)
+        return Ok(pfm.clone());
     }
 
-    fn load_persistence(&mut self) {
+    async fn load_persistence(self) {
         let dir = Path::new(&self.basepath);
         if dir.is_dir() {
             for entry in fs::read_dir(dir).unwrap() {
@@ -277,34 +271,34 @@ impl TimeseriesPersistenceManager {
                 if path.is_dir() {
                     let timeseries_name = path.to_str().unwrap().to_string();
                     info!(
-                        "Loading databases basepath: {} - parquet ts db:{:?}",
-                        self.basepath,
+                        "Loading databases basepath: {:?} - parquet ts db:{:?}",
+                        dir,
                         timeseries_name.clone(),
                     );
-                    self.load_or_create_database(timeseries_name).unwrap();
+                    self.clone()
+                        .load_or_create_database(timeseries_name)
+                        .await
+                        .unwrap();
                 };
             }
         }
     }
 
-    pub fn setup(&mut self) {
+    pub async fn setup(self) {
         // create folder if it does not exists
         if !Path::new(&self.basepath).exists() {
             fs::create_dir_all(&self.basepath).unwrap();
             return;
         }
-        self.load_persistence();
+        self.clone().load_persistence().await;
     }
 
-    pub fn new(basepath: String) -> Self {
-        let bp = Path::new(&basepath);
-
-        let mut s = Self {
+    pub async fn new(basepath: String) -> Self {
+        let s = Self {
             basepath: basepath.clone(),
             storages: Arc::new(Mutex::new(HashMap::new())),
-            execution_contexts: Arc::new(Mutex::new(HashMap::new())),
         };
-        s.setup();
+        s.clone().setup().await;
         return s;
     }
 }

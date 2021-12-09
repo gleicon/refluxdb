@@ -37,7 +37,7 @@ impl UDPRefluxServer {
                                 field.1.clone(),
                                 htags.clone(),
                                 true, // create the database if it doesn't exists
-                            ) {
+                            ).await {
                                 Ok(_) => info!(
                                     "Timeseries {} Measurement {} value {}",
                                     b.measurement_name.clone(),

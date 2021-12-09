@@ -3,7 +3,7 @@ pub fn query_statement_tablename(query: String) -> Result<String, String> {
     match stmt {
         Ok(t) => match &t[0] {
             datafusion::sql::parser::Statement::Statement(tt) => match tt {
-                sqlparser::ast::Statement::Query(b) => match b.body {
+                sqlparser::ast::Statement::Query(b) => match &b.body {
                     sqlparser::ast::SetExpr::Select(ss) => match &ss.from[0].relation {
                         sqlparser::ast::TableFactor::Table {
                             name,
@@ -20,6 +20,7 @@ pub fn query_statement_tablename(query: String) -> Result<String, String> {
                 },
                 _ => return Err(format!("Invalid SELECT statement: {}", tt)),
             },
+            _ => return Err(format!("Invalid statement: {:?}", t)),
         },
         Err(e) => return Err(format!("Improper query: {}", e)),
     }
