@@ -255,12 +255,16 @@ impl TimeseriesPersistenceManager {
     ) -> Result<crate::utils::filemanager::ParquetFileManager, String> {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
 
-        let pfm = crate::utils::ParquetFileManager::new(self.basepath.clone()).await;
-        self.storages
-            .lock()
-            .unwrap()
-            .insert(ts_tablename.into(), pfm.clone());
-        return Ok(pfm.clone());
+        match crate::utils::ParquetFileManager::new(self.basepath.clone(), false).await {
+            Ok(pfm) => {
+                self.storages
+                    .lock()
+                    .unwrap()
+                    .insert(ts_tablename.into(), pfm.clone());
+                return Ok(pfm.clone());
+            }
+            Err(e) => Err(format!("Error: {}", e)),
+        }
     }
 
     async fn load_persistence(self) {
@@ -275,10 +279,10 @@ impl TimeseriesPersistenceManager {
                         dir,
                         timeseries_name.clone(),
                     );
-                    self.clone()
-                        .load_or_create_database(timeseries_name)
-                        .await
-                        .unwrap();
+                    match self.clone().load_or_create_database(timeseries_name).await {
+                        Ok(db) => println!("Db loaded"),
+                        Err(e) => println!("Err: no table at {:?} - {}", dir, e),
+                    }
                 };
             }
         }

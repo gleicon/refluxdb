@@ -28,10 +28,11 @@ It still in early phases so internal interfaces may change.
 The main components for the database are contained within the timeseries [persistence manager](src/persistence.rs).
 
 The basic concepts are the following:
-    Measurement: Unit of data tied to a time, within a timeseries, annotated with tags
-    Timeseries: A set of immutable measurements that move forward in time
-    Resultset: a slice of data from a timeseries within T(start) and T(end)
-    Tags: json annotations to measurements used to filter and group resultsets
+    
+    - Measurement: Unit of data tied to a time, within a timeseries, annotated with tags
+    - Timeseries: A set of immutable measurements that move forward in time
+    - Resultset: a slice of data from a timeseries within T(start) and T(end)
+    - Tags: json annotations to measurements used to filter and group resultsets
 
 
 ##### Database structure:

@@ -1,5 +1,4 @@
 use datafusion;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
@@ -10,42 +9,26 @@ pub struct ParquetFileManager {
 }
 
 impl ParquetFileManager {
-    async fn load_parquet(&mut self, pathname: String) {
-        let path = Path::new(&pathname);
-        let tablename = path.file_stem().unwrap().to_str().unwrap();
-
-        self.execution_context
-            .register_parquet(&tablename.clone(), &pathname)
+    async fn load_files(&mut self) -> Result<(), String> {
+        let main_name = &self.path.file_stem().unwrap().to_str().unwrap();
+        match self
+            .execution_context
+            .register_parquet(main_name, &self.root_path)
             .await
-            .unwrap();
-    }
-
-    async fn load_files(&mut self) {
-        let dir = &self.path;
-        if dir.is_dir() {
-            // directory with one or more files may be a partitioned parquet file
-            for entry in fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_file() {
-                    let parquet_path = path.to_str().unwrap().to_string();
-                    self.load_parquet(parquet_path).await;
-                };
-                let main_name = self.path.file_stem().unwrap().to_str().unwrap();
-                self.execution_context
-                    .register_parquet(main_name, &self.root_path)
-                    .await
-                    .unwrap();
-            }
-        } else {
-            // single file
-            if self.path.is_file() {
-                let parquet_path = self.path.to_str().unwrap().to_string();
-                self.load_parquet(parquet_path).await;
-            };
+        {
+            Ok(_r) => return Ok(()),
+            Err(e) => return Err(format!("Error registering parquet: {}", e)),
         }
     }
 
-    pub async fn new(basepath: String) -> Self {
+    async fn create_empty_parquet(&mut self) {
+        let timeseries_schema = "
+        timeseries schema {
+            REQUIRED INT32 b;
+        }
+        ";
+    }
+    pub async fn new(basepath: String, create_if_not_exists: bool) -> Result<Self, String> {
         let bp = Path::new(&basepath);
         let execution_config =
             datafusion::prelude::ExecutionConfig::new().with_information_schema(true);
@@ -56,7 +39,15 @@ impl ParquetFileManager {
             execution_context: datafusion::prelude::ExecutionContext::with_config(execution_config),
         };
 
-        s.load_files().await;
-        return s;
+        match s.load_files().await {
+            Ok(_) => return Ok(s),
+            Err(e) => {
+                if !create_if_not_exists {
+                    // create an empty parquet file
+                    return Err(format!("Error loading parquet files: {}", e));
+                }
+            }
+        }
+        return Ok(s);
     }
 }
