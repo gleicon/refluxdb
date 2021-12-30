@@ -22,9 +22,17 @@ impl ParquetFileManager {
     }
 
     async fn create_empty_parquet(&mut self) {
+        // (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+        // https://parquet.apache.org/documentation/latest/
+        // map timeseries to parquet type
         let timeseries_schema = "
         timeseries schema {
-            REQUIRED INT32 b;
+            REQUIRED BYTE_ARRAY id;
+            REQUIRED INT64 time;
+            REQUIRED INT64 created_at;
+            REQUIRED BYTE_ARRAY name;
+            REQUIRED value FLOAT;
+            REQUIRED tags BYTE_ARRAY;
         }
         ";
     }

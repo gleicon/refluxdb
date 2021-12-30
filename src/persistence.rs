@@ -89,6 +89,7 @@ impl TimeseriesPersistenceManager {
             .unwrap()
             .get_mut(&timeseries_name.clone())
         {
+            // deadlock, item is in, db does not exists
             Some(s) => Ok(s.clone()),
             None => {
                 if create_if_not_exists {
@@ -255,7 +256,7 @@ impl TimeseriesPersistenceManager {
     ) -> Result<crate::utils::filemanager::ParquetFileManager, String> {
         let ts_tablename = timeseries_name.split("/").last().unwrap();
 
-        match crate::utils::ParquetFileManager::new(self.basepath.clone(), false).await {
+        match crate::utils::ParquetFileManager::new(self.basepath.clone(), true).await {
             Ok(pfm) => {
                 self.storages
                     .lock()
