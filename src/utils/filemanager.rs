@@ -1,5 +1,14 @@
 use datafusion;
+use parquet::{
+    file::{
+        properties::WriterProperties,
+        writer::{FileWriter, SerializedFileWriter},
+    },
+    schema::parser::parse_message_type,
+};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ParquetFileManager {
@@ -35,6 +44,17 @@ impl ParquetFileManager {
             REQUIRED tags BYTE_ARRAY;
         }
         ";
+        let schema = Arc::new(parse_message_type(timeseries_schema).unwrap());
+        let props = Arc::new(WriterProperties::builder().build());
+        let file = fs::File::create(self.path.clone()).unwrap();
+        let mut writer = SerializedFileWriter::new(file, schema, props).unwrap();
+        let row_group_writer = writer.next_row_group().unwrap();
+        // while let Some(mut col_writer) = row_group_writer.next_column().unwrap() {
+        //     // ... write values to a column writer
+        //     row_group_writer.close_column(col_writer).unwrap();
+        // }
+        writer.close_row_group(row_group_writer).unwrap();
+        writer.close().unwrap();
     }
     pub async fn new(basepath: String, create_if_not_exists: bool) -> Result<Self, String> {
         let bp = Path::new(&basepath);
@@ -52,6 +72,7 @@ impl ParquetFileManager {
             Err(e) => {
                 if !create_if_not_exists {
                     // create an empty parquet file
+                    s.create_empty_parquet().await;
                     return Err(format!("Error loading parquet files: {}", e));
                 }
             }
