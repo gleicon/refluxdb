@@ -1,5 +1,6 @@
 use arrow::record_batch::RecordBatch;
 use chrono::Local;
+use datafusion::execution::context;
 
 use crate::utils::db;
 use log::{debug, info};
@@ -124,36 +125,36 @@ impl TimeseriesPersistenceManager {
                 let now = Local::now();
                 let now_dt = now.to_rfc3339(); //timestamp_millis();
                 let tags_json = serde_json::to_string(&tags);
-                let query = format!(
-                    // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
-                    "INSERT INTO {} VALUES ('{}', '{}', '{}', '{}', {}, '{}')",
-                    timeseries_name,
-                    uuid, //.as_u128(),
-                    now_dt,
-                    now_dt,
-                    name,
-                    value,
-                    tags_json.unwrap()
-                );
+                // let query = format!(
+                //     // "CREATE TABLE {} (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+                //     "INSERT INTO {} VALUES ('{}', '{}', '{}', '{}', {}, '{}')",
+                //     timeseries_name,
+                //     uuid, //.as_u128(),
+                //     now_dt,
+                //     now_dt,
+                //     name,
+                //     value,
+                //     tags_json.unwrap()
+                // ); // INSERT won't do here, we need to append or create + append a new parquet 
+                let ev = Measurement {
+                    time: now.clone().timestamp_millis(),
+                    created_at: now.clone().timestamp_millis(),
+                    name: name,
+                    id: uuid.clone(),
+                    value: value.clone(),
+                    tags: tags.clone(),
+                };
 
                 match self
-                    .write_to_parquet(timeseries_name, &query, dbe.path.to_str().unwrap())
+                    .write_to_parquet(timeseries_name, &ev, dbe.path.to_str().unwrap())
                     .await
                 {
                     Ok(r) => {
                         debug!("{:?}", r);
-                        let ev = Measurement {
-                            time: now.clone().timestamp_millis(),
-                            created_at: now.clone().timestamp_millis(),
-                            name: name,
-                            id: uuid.clone(),
-                            value: value.clone(),
-                            tags: tags.clone(),
-                        };
                         return Ok(ev);
                     }
                     Err(e) => {
-                        return Err(format!("Error saving measurement: {} {}", e, query.clone()))
+                        return Err(format!("Error saving measurement: {} {:?}", e, ev.clone()))
                     }
                 }
             }
@@ -164,22 +165,19 @@ impl TimeseriesPersistenceManager {
     pub async fn write_to_parquet(
         &mut self,
         timeseries: String,
-        query: &str,
+        ev: &Measurement,
         filepath: &str,
     ) -> datafusion::error::Result<()> {
-        let st = self
+        let mut st = self
             .storages
             .lock()
             .unwrap()
             .get(&timeseries)
             .unwrap()
             .clone();
-        let ctx = st.execution_context.clone();
-        let logical_plan = ctx.create_logical_plan(&query).unwrap();
-        let logical_plan = ctx.optimize(&logical_plan).unwrap();
-        let physical_plan = ctx.create_physical_plan(&logical_plan).await.unwrap();
-        ctx.write_parquet(physical_plan, filepath, None).await
-    }
+        st.write_parquet(ev).await;
+        return Ok(())
+       }
 
     // consider this insecure by design. the timeseries name comes with the query string :grin:
     pub async fn query_measurements(&mut self, query: String) -> Result<Vec<RecordBatch>, String> {

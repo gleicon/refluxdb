@@ -6,9 +6,13 @@ use parquet::{
     },
     schema::parser::parse_message_type,
 };
-use std::fs;
+use parquet::{column::writer::ColumnWriter, data_type::ByteArray};
+
+use std::{fs, convert::TryFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use crate::persistence::Measurement;
 
 #[derive(Clone)]
 pub struct ParquetFileManager {
@@ -35,7 +39,7 @@ impl ParquetFileManager {
         // https://parquet.apache.org/documentation/latest/
         // map timeseries to parquet type
         let timeseries_schema = "
-        timeseries schema {
+        message schema {
             REQUIRED BYTE_ARRAY id;
             REQUIRED INT64 time;
             REQUIRED INT64 created_at;
@@ -56,6 +60,124 @@ impl ParquetFileManager {
         writer.close_row_group(row_group_writer).unwrap();
         writer.close().unwrap();
     }
+
+    pub async fn write_parquet(&mut self, ev: &Measurement) {
+        // (id UUID, time TIMESTAMP, created_at TIMESTAMP, name TEXT, value FLOAT, tags MAP);",
+        // https://parquet.apache.org/documentation/latest/
+        // map timeseries to parquet type
+        let timeseries_schema = "
+        message schema {
+            REQUIRED BYTE_ARRAY id;
+            REQUIRED INT64 time;
+            REQUIRED INT64 created_at;
+            REQUIRED BYTE_ARRAY name;
+            REQUIRED FLOAT value;
+            REQUIRED BYTE_ARRAY tags;
+        }
+        ";
+        let mut filename = self.path.clone();
+        //filename.push(ev.name.as_str());
+        filename.push(ev.name.as_str());
+        let schema = Arc::new(parse_message_type(timeseries_schema).unwrap());
+        let props = Arc::new(WriterProperties::builder().build());
+        let file = fs::File::create(filename).unwrap();
+        let mut writer = SerializedFileWriter::new(file, schema, props).unwrap();
+        let mut row_group_writer = writer.next_row_group().unwrap();
+        // Columns:
+
+        // BYTE_ARRAY
+        // INT64
+        // INT64
+        // FLOAT
+        // BYTE_ARRAY
+        // ****** id (uuid)
+        let id_writer = row_group_writer.next_column().unwrap();
+            if let Some(mut writer) = id_writer {
+                match writer {
+                    ColumnWriter::ByteArrayColumnWriter(ref mut typed) => {
+                        let ba = ByteArray::from(ev.id.to_string().as_str());
+                        let values = vec![ba];
+                        let _ = typed.write_batch(&values, None, None).unwrap() as i64;
+
+                    },
+                    _ => {
+                        unimplemented!();
+                    }
+                }
+                row_group_writer.close_column(writer).unwrap();
+            }
+        // ****** time
+        let data_writer = row_group_writer.next_column().unwrap();
+            if let Some(mut writer) = data_writer {
+                match writer {
+                    ColumnWriter::Int64ColumnWriter(ref mut typed) => {
+                        let values = vec![ev.time];
+                        let _ = typed.write_batch(&values, None, None).unwrap() as i64;
+                    }
+                    _ => {
+                        unimplemented!();
+                    }
+                }
+                row_group_writer.close_column(writer).unwrap();
+            }
+         // ******
+
+         // ****** creates at
+        let mut created_at_writer = row_group_writer.next_column().unwrap();
+        if let Some(mut writer) = created_at_writer {
+            match writer {
+                ColumnWriter::Int64ColumnWriter(ref mut typed) => {
+                    let values = vec![ev.created_at];
+                    let _ = typed.write_batch(&values, None, None).unwrap() as i64;
+                }
+                _ => {
+                    unimplemented!();
+                }
+            }
+            row_group_writer.close_column(writer).unwrap();
+        }
+     // ******
+
+       // ****** value (float)
+       let value_writer = row_group_writer.next_column().unwrap();
+       if let Some(mut writer) = value_writer {
+           match writer {
+               ColumnWriter::DoubleColumnWriter(ref mut typed) => {
+                   let values = vec![ev.value];
+                   let _ = typed.write_batch(&values, None, None).unwrap() as i64;
+               }
+                   _ => {
+                       unimplemented!();
+                   }
+           }
+           row_group_writer.close_column(writer).unwrap();
+       }
+    // ******
+
+    // *** tags
+    let mut tags_writer = row_group_writer.next_column().unwrap();
+            if let Some(mut writer) = tags_writer {
+                match writer {
+                    ColumnWriter::ByteArrayColumnWriter(ref mut typed) => {
+                        //let ba = ByteArray::try_from(ev.id.as_bytes());
+                        let ba = ByteArray::try_from(bincode::serialize(&ev.tags).unwrap());
+                        let values = vec![ba.unwrap()];
+                        let _ = typed.write_batch(&values, None, None).unwrap() as i64;
+
+                    },
+                    _ => {
+                        unimplemented!();
+                    }
+                }
+                row_group_writer.close_column(writer).unwrap();
+            }
+    // ***
+
+       
+        writer.close_row_group(row_group_writer).unwrap();
+        writer.close().unwrap();
+    }
+
     pub async fn new(basepath: String, create_if_not_exists: bool) -> Result<Self, String> {
         let bp = Path::new(&basepath);
         let execution_config =

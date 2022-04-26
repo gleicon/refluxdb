@@ -79,7 +79,7 @@ impl LineProtocol {
         if line.is_empty() {
             return Err("Error: Empty string".to_string());
         }
-
+        println!("{}", line);
         let mut proto = LineProtocol::default();
 
         let mut s = line.split_whitespace();

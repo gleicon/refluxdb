@@ -31,6 +31,7 @@ impl UDPRefluxServer {
                         }
                         // One line for each measurement, represented b field_set
                         for field in b.field_set.clone() {
+                            println!("{}", field.0);
                             match self.pm.lock().unwrap().save_measurement(
                                 b.measurement_name.clone(),
                                 field.0.clone(),
