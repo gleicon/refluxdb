@@ -17,12 +17,12 @@ async fn main() -> std::io::Result<()> {
         "actix_web=info,actix_server=info,refluxdb=info,refluxdb::handlers=info",
     );
     env_logger::init();
-    let db_dir = "databases";
+    let db_path = "timeseries.db";
 
     let addr = "127.0.0.1:8089".to_string();
-    let pm = Arc::new(Mutex::new(
-        persistence::TimeseriesPersistenceManager::new(db_dir.to_string()).await,
-    ));
+    let pm = Arc::new(Mutex::new(persistence::TimeseriesPersistenceManager::new(
+        db_path,
+    )));
     let data = web::Data::new(pm.clone());
 
     let _task = actix_rt::spawn(async move {

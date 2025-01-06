@@ -40,19 +40,17 @@ async fn query_timeseries_range(
     // sanitize query strings, check if the data type is really datetime
     let st = info.start.parse::<DateTime<Utc>>().unwrap();
     let en = info.end.parse::<DateTime<Utc>>().unwrap();
-    let mut pm = data.lock().unwrap().clone();
-    if !pm.clone().timeseries_exists(ts.timeseries.clone()) {
+    let pm = data.lock().unwrap().clone();
+    if !pm.clone().timeseries_exists(&ts.timeseries) {
         return Ok(HttpResponse::NotFound()
             .content_type("application/json")
             .body(format!("Timeseries not found: {}", ts.timeseries.clone())));
     }
-    let measurement_range = pm
-        .get_measurement_range(
-            ts.timeseries.clone(),
-            st.timestamp_millis(),
-            en.timestamp_millis(),
-        )
-        .await;
+    let measurement_range = pm.get_measurement_range(
+        ts.timeseries.as_str(),
+        st.timestamp_millis(),
+        en.timestamp_millis(),
+    );
     match measurement_range {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -77,8 +75,10 @@ async fn query_timeseries(
     // q -> query string
     let qs = form.q.clone();
     debug!("query string: {}", format!("{:?}", qs));
-    let mut pm = data.lock().unwrap().clone();
-    let pme = pm.query_measurements(qs.to_string()).await;
+    let pm = data.lock().unwrap().clone();
+    let start_key = 0; // Placeholder value, replace with actual logic
+    let end_key = i64::MAX; // Placeholder value, replace with actual logic
+    let pme = pm.query_measurements(&qs, start_key, end_key);
     match pme {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -113,31 +113,35 @@ async fn write_timeseries(
             }
             // One line for each measurement, represented b field_set
             for field in b.field_set.clone() {
-                match pm
-                    .lock()
-                    .unwrap()
-                    .save_measurement(
-                        b.measurement_name.clone(),
-                        field.0.clone(),
-                        field.1.clone(),
-                        htags.clone(),
-                        true, // create db if it doesn't exists
-                    )
-                    .await
-                {
-                    Ok(_) => info!(
-                        "Timeseries {} Measurement {} value {}",
-                        b.measurement_name.clone(),
-                        field.0.clone(),
-                        field.1.clone()
-                    ),
+                match field.1.parse::<f64>() {
+                    Ok(value) => {
+                        match pm.lock().unwrap().save_measurement(
+                            &b.measurement_name,
+                            &field.0,
+                            value, // pass the parsed f64 value
+                            &htags,
+                        ) {
+                            Ok(_) => info!(
+                                "Timeseries {} Measurement {} value {}",
+                                b.measurement_name.clone(),
+                                field.0.clone(),
+                                value
+                            ),
+                            Err(e) => {
+                                info!("Error writing measurement: {}", e);
+                                return Ok(HttpResponse::BadRequest()
+                                    .content_type("application/json")
+                                    .json(format!("Error writing measurement: {}", e)));
+                            }
+                        };
+                    }
                     Err(e) => {
-                        info!("Error writing measurement: {}", e);
+                        info!("Error parsing field value: {}", e);
                         return Ok(HttpResponse::BadRequest()
                             .content_type("application/json")
-                            .json(format!("Error writing measurement: {}", e)));
+                            .json(format!("Error parsing field value: {}", e)));
                     }
-                };
+                }
             }
             return Ok(HttpResponse::Ok()
                 .content_type("application/json")

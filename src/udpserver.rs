@@ -31,21 +31,27 @@ impl UDPRefluxServer {
                         }
                         // One line for each measurement, represented b field_set
                         for field in b.field_set.clone() {
-                            match self.pm.lock().unwrap().save_measurement(
-                                b.measurement_name.clone(),
-                                field.0.clone(),
-                                field.1.clone(),
-                                htags.clone(),
-                                true, // create the database if it doesn't exists
-                            ).await {
-                                Ok(_) => info!(
-                                    "Timeseries {} Measurement {} value {}",
-                                    b.measurement_name.clone(),
-                                    field.0.clone(),
-                                    field.1.clone()
-                                ),
-                                Err(e) => info!("Error writing measurement: {}", e),
-                            };
+                            match field.1.parse::<f64>() {
+                                Ok(value) => {
+                                    match self.pm.lock().unwrap().save_measurement(
+                                        &b.measurement_name,
+                                        &field.0,
+                                        value, // pass the parsed f64 value
+                                        &htags,
+                                    ) {
+                                        Ok(_) => info!(
+                                            "Timeseries {} Measurement {} value {}",
+                                            b.measurement_name.clone(),
+                                            field.0.clone(),
+                                            value
+                                        ),
+                                        Err(e) => info!("Error writing measurement: {}", e),
+                                    };
+                                }
+                                Err(e) => {
+                                    info!("Error parsing field value: {}", e);
+                                }
+                            }
                         }
                         //echo back the line
                         let bs = b.serialize().clone();
@@ -102,6 +108,6 @@ impl UDPRefluxServer {
             to_send: None,
             pm: pm,
         };
-        return s;
+        s
     }
 }

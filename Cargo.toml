@@ -6,6 +6,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rusqlite = "0.26.0"
 actix-web = { version = "4.0.0-beta.12" }
 tokio = { version = "1.8.1", features = ["process", "sync", "rt", "signal", "tracing"] }
 arrow = "6.3.0"
@@ -26,4 +27,3 @@ chrono = { version = "0.4.19", features = ["serde"] }
 actix-rt = "2.5.0"
 
 sqlparser = "0.12.0"
-

@@ -5,8 +5,38 @@ use indexmap::IndexMap;
 pub struct LineProtocol {
     pub measurement_name: String,
     pub tag_set: IndexMap<String, String>,
-    pub field_set: IndexMap<String, f64>,
+    pub field_set: IndexMap<String, String>,
     pub timestamp: i64,
+}
+
+#[test]
+fn parse_empty_string() {
+    let tst = "".to_string();
+    let res = crate::protocol::LineProtocol::parse(tst);
+    assert!(res.is_err());
+}
+
+#[test]
+fn parse_missing_fieldkey() {
+    let tst = "measurement,tag1=value1".to_string();
+    let res = crate::protocol::LineProtocol::parse(tst);
+    assert!(res.is_err());
+}
+
+#[test]
+fn parse_missing_timestamp() {
+    let tst = "measurement,tag1=value1 fieldKey=\"fieldValue\"".to_string();
+    let res = crate::protocol::LineProtocol::parse(tst);
+    assert!(res.is_err());
+}
+
+#[test]
+fn serialize_no_fieldkey() {
+    let mut proto = crate::protocol::LineProtocol::default();
+    proto.measurement_name = "measurement".to_string();
+    proto.tag("tag1".to_string(), "value1".to_string());
+    let res = proto.serialize();
+    assert!(res.is_err());
 }
 
 impl Default for LineProtocol {
@@ -39,7 +69,7 @@ impl LineProtocol {
 
     pub fn field(&mut self, key: String, value: String) {
         if key.len() > 0 && value.len() > 0 {
-            self.field_set.insert(key, value.parse().unwrap());
+            self.field_set.insert(key, value);
         }
     }
 
@@ -63,7 +93,7 @@ impl LineProtocol {
             } else {
                 buf += " "
             }
-            buf += &format!("{}={}", k, v);
+            buf += &format!("{}=\"{}\"", k, v);
             count += 1;
         }
 
