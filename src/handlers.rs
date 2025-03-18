@@ -25,7 +25,7 @@ struct FormData {
 async fn list_timeseries(
     pm: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
-    let res = pm.lock().unwrap().clone().list_timeseries().unwrap();
+    let res = pm.lock().unwrap().list_timeseries().await.unwrap();
     return Ok(HttpResponse::Ok()
         .content_type("application/json")
         .json(format!("{:?}", res)));
@@ -33,24 +33,25 @@ async fn list_timeseries(
 
 #[get("/range/{timeseries}")]
 async fn query_timeseries_range(
-    web::Query(info): web::Query<RangeQueryRequest>, // ?start=time&end=time
+    web::Query(info): web::Query<RangeQueryRequest>,
     ts: web::Path<TimeseriesInfo>,
     data: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
-    // sanitize query strings, check if the data type is really datetime
     let st = info.start.parse::<DateTime<Utc>>().unwrap();
     let en = info.end.parse::<DateTime<Utc>>().unwrap();
-    let pm = data.lock().unwrap().clone();
-    if !pm.clone().timeseries_exists(&ts.timeseries) {
+    let pm = data.lock().unwrap();
+    if !pm.timeseries_exists(&ts.timeseries).await.unwrap() {
         return Ok(HttpResponse::NotFound()
             .content_type("application/json")
             .body(format!("Timeseries not found: {}", ts.timeseries.clone())));
     }
-    let measurement_range = pm.get_measurement_range(
-        ts.timeseries.as_str(),
-        st.timestamp_millis(),
-        en.timestamp_millis(),
-    );
+    let measurement_range = pm
+        .get_measurement_range(
+            ts.timeseries.as_str(),
+            st.timestamp_millis(),
+            en.timestamp_millis(),
+        )
+        .await;
     match measurement_range {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -72,13 +73,12 @@ async fn query_timeseries(
     form: web::Form<FormData>,
     data: web::Data<Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>>,
 ) -> Result<HttpResponse, Error> {
-    // q -> query string
     let qs = form.q.clone();
     debug!("query string: {}", format!("{:?}", qs));
-    let pm = data.lock().unwrap().clone();
-    let start_key = 0; // Placeholder value, replace with actual logic
-    let end_key = i64::MAX; // Placeholder value, replace with actual logic
-    let pme = pm.query_measurements(&qs, start_key, end_key);
+    let pm = data.lock().unwrap();
+    let start_key = 0;
+    let end_key = i64::MAX;
+    let pme = pm.query_measurements(&qs, start_key, end_key).await;
     match pme {
         Ok(ret) => {
             return Ok(HttpResponse::Ok()
@@ -115,12 +115,17 @@ async fn write_timeseries(
             for field in b.field_set.clone() {
                 match field.1.parse::<f64>() {
                     Ok(value) => {
-                        match pm.lock().unwrap().save_measurement(
-                            &b.measurement_name,
-                            &field.0,
-                            value, // pass the parsed f64 value
-                            &htags,
-                        ) {
+                        match pm
+                            .lock()
+                            .unwrap()
+                            .save_measurement(
+                                &b.measurement_name,
+                                &field.0,
+                                value, // pass the parsed f64 value
+                                &htags,
+                            )
+                            .await
+                        {
                             Ok(_) => info!(
                                 "Timeseries {} Measurement {} value {}",
                                 b.measurement_name.clone(),

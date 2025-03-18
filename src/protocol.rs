@@ -68,7 +68,8 @@ impl LineProtocol {
     }
 
     pub fn field(&mut self, key: String, value: String) {
-        if key.len() > 0 && value.len() > 0 {
+        // Allow empty values but not empty keys
+        if key.len() > 0 {
             self.field_set.insert(key, value);
         }
     }
@@ -86,13 +87,13 @@ impl LineProtocol {
         }
 
         let mut count = 0;
-
         for (k, v) in self.field_set.iter() {
             if count > 0 {
                 buf += ","
             } else {
                 buf += " "
             }
+            // Simple quote wrapping without escaping
             buf += &format!("{}=\"{}\"", k, v);
             count += 1;
         }
@@ -112,73 +113,81 @@ impl LineProtocol {
 
         let mut proto = LineProtocol::default();
 
-        let mut s = line.split_whitespace();
-        // measurement name and tags
-        match s.next() {
-            Some(mn) => {
-                let tags = Box::new(match mn.find(",") {
-                    Some(_) => {
-                        let tt = mn.split(",").collect::<Vec<&str>>();
-                        tt
-                    }
-                    None => vec![mn],
-                });
-                proto.measurement_name = tags[0].to_string();
-                for tag in tags[1..].iter() {
-                    match tag.split_once("=") {
-                        Some((k, v)) => proto.tag(k.to_string(), v.to_string()),
-                        None => (),
-                    }
+        // Split on whitespace but preserve the original line for error messages
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(format!("Error: invalid protocol line: {:?}", line));
+        }
+
+        // Parse measurement name and tags
+        let mn = parts[0];
+        let tags = Box::new(match mn.find(",") {
+            Some(_) => mn.split(",").map(|s| s.trim()).collect::<Vec<&str>>(),
+            None => vec![mn],
+        });
+
+        if tags[0].is_empty() {
+            return Err("Error: Empty measurement name".to_string());
+        }
+        proto.measurement_name = tags[0].to_string();
+
+        for tag in tags[1..].iter() {
+            if let Some((k, v)) = tag.split_once("=") {
+                if k.is_empty() {
+                    return Err("Error: Empty tag key".to_string());
                 }
+                if v.is_empty() {
+                    return Err("Error: Empty tag value".to_string());
+                }
+                proto.tag(k.to_string(), v.to_string());
             }
-            None => {
-                return Err(format!("Error: broken protocol line: {:?}", line));
+        }
+
+        // Parse fields
+        let fk = parts[1];
+        let fkeys = Box::new(match fk.find(",") {
+            Some(_) => fk.split(",").map(|s| s.trim()).collect::<Vec<&str>>(),
+            None => vec![fk],
+        });
+
+        for fk in fkeys.iter() {
+            if let Some((k, v)) = fk.split_once("=") {
+                if k.is_empty() {
+                    return Err("Error: Empty field key".to_string());
+                }
+                // Check if the field value is properly quoted
+                if !v.starts_with('"') || !v.ends_with('"') {
+                    return Err(format!("Error: field value must be quoted: {:?}", line));
+                }
+                // Simple quote removal
+                let cleaned_value = v[1..v.len() - 1].to_string();
+                proto.field(k.to_string(), cleaned_value);
+            }
+        }
+
+        // Parse timestamp
+        if parts.len() < 3 {
+            return Err(format!("Error: no timestamp - line: {:?}", line));
+        }
+
+        let ts = parts[2];
+        proto.timestamp = match ts.parse::<i64>() {
+            Ok(a) => a,
+            Err(e) => {
+                return Err(format!(
+                    "Error: invalid timestamp: {} - line: {:?}",
+                    e, line
+                ))
             }
         };
-        // fieldset
-        match s.next() {
-            Some(fk) => {
-                let fkeys = Box::new(match fk.find(",") {
-                    Some(_) => {
-                        let tt = fk.split(",").collect::<Vec<&str>>();
-                        tt //[1..]
-                    }
-                    None => vec![fk],
-                });
-                for fk in fkeys.iter() {
-                    match fk.split_once("=") {
-                        Some((k, v)) => proto.field(k.to_string(), v.to_string()),
-                        None => (),
-                    }
-                }
-            }
-            None => {
-                return Err(format!("Error: no fieldkey - line: {:?}", line));
-            }
-        }
-        // timestamp
-        match s.next() {
-            Some(ts) => {
-                proto.timestamp = match ts.parse::<i64>() {
-                    Ok(a) => a,
-                    Err(e) => {
-                        return Err(format!(
-                            "Error: invalid timestamp: {} - line: {:?}",
-                            e, line
-                        ))
-                    }
-                };
-            }
-            None => {
-                return Err(format!("Error: no timestamp - line: {:?}", line));
-            }
-        }
+
         Ok(proto)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn single_tag() {
@@ -186,16 +195,15 @@ mod tests {
             .to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
-
-        assert_eq!(tst.clone(), out);
+        assert_eq!(tst, out);
     }
+
     #[test]
     fn multiple_tags() {
         let tst = "myMultipleTagMeasurement,tag1=value1,tag2=value2 fieldKey=\"fieldValue\" 1556813561098000000".to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
-
-        assert_eq!(tst.clone(), out);
+        assert_eq!(tst, out);
     }
 
     #[test]
@@ -203,8 +211,7 @@ mod tests {
         let tst = "mySingleFieldKey fieldKey=\"fieldValue\" 1556813561098000000".to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
-
-        assert_eq!(tst.clone(), out);
+        assert_eq!(tst, out);
     }
 
     #[test]
@@ -214,7 +221,189 @@ mod tests {
                 .to_string();
         let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
         let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
 
-        assert_eq!(tst.clone(), out);
+    #[test]
+    fn test_empty_measurement_name() {
+        let tst = ",tag1=value1 fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_invalid_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\" invalid_timestamp".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_missing_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\"".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_empty_field_value() {
+        let tst = "measurement,tag1=value1 fieldKey=\"\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_multiple_spaces() {
+        let tst = "measurement  fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(out, "measurement fieldKey=\"value\" 1556813561098000000");
+    }
+
+    #[test]
+    fn test_empty_tags() {
+        let tst = "measurement fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_invalid_field_format() {
+        let tst = "measurement,tag1=value1 fieldKey=value 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_invalid_tag_format() {
+        let tst = "measurement,tag1 value1 fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_very_large_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\" 9223372036854775807".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_negative_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\" -1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_empty_tag_key() {
+        let tst = "measurement,=value1 fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_empty_tag_value() {
+        let tst = "measurement,tag1= fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_empty_field_key() {
+        let tst = "measurement,tag1=value1 =\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_missing_field_value() {
+        let tst = "measurement,tag1=value1 fieldKey= 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_malformed_quotes() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_zero_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\" 0".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_small_timestamp() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value\" 1".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_multiple_spaces_in_tags() {
+        let tst = "measurement,tag1=value1, tag2=value2 fieldKey=\"value\" 1556813561098000000"
+            .to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(
+            out,
+            "measurement,tag1=value1,tag2=value2 fieldKey=\"value\" 1556813561098000000"
+        );
+    }
+
+    #[test]
+    fn test_multiple_spaces_in_fields() {
+        let tst = "measurement,tag1=value1 fieldKey1=\"value1\", fieldKey2=\"value2\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(
+            out,
+            "measurement,tag1=value1 fieldKey1=\"value1\",fieldKey2=\"value2\" 1556813561098000000"
+        );
+    }
+
+    #[test]
+    fn test_measurement_with_spaces() {
+        let tst = "my measurement,tag1=value1 fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_tag_with_spaces() {
+        let tst = "measurement,tag 1=value1 fieldKey=\"value\" 1556813561098000000".to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_field_value_with_spaces() {
+        let tst = "measurement,tag1=value1 fieldKey=\"value with spaces\" 1556813561098000000"
+            .to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
+    }
+
+    #[test]
+    fn test_tag_value_with_spaces() {
+        let tst = "measurement,tag1=\"value with spaces\" fieldKey=\"value\" 1556813561098000000"
+            .to_string();
+        let res = crate::protocol::LineProtocol::parse(tst.clone()).unwrap();
+        let out = res.serialize().unwrap();
+        assert_eq!(tst, out);
     }
 }

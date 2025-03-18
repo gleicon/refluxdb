@@ -9,7 +9,7 @@ pub struct UDPRefluxServer {
     pub socket: UdpSocket,
     buf: Vec<u8>,
     to_send: Option<(usize, SocketAddr)>,
-    pm: Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>,
+    pub pm: Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>>,
 }
 
 impl UDPRefluxServer {
@@ -33,12 +33,18 @@ impl UDPRefluxServer {
                         for field in b.field_set.clone() {
                             match field.1.parse::<f64>() {
                                 Ok(value) => {
-                                    match self.pm.lock().unwrap().save_measurement(
-                                        &b.measurement_name,
-                                        &field.0,
-                                        value, // pass the parsed f64 value
-                                        &htags,
-                                    ) {
+                                    match self
+                                        .pm
+                                        .lock()
+                                        .unwrap()
+                                        .save_measurement(
+                                            &b.measurement_name,
+                                            &field.0,
+                                            value, // pass the parsed f64 value
+                                            &htags,
+                                        )
+                                        .await
+                                    {
                                         Ok(_) => info!(
                                             "Timeseries {} Measurement {} value {}",
                                             b.measurement_name.clone(),
@@ -109,5 +115,11 @@ impl UDPRefluxServer {
             pm: pm,
         };
         s
+    }
+
+    pub fn get_persistence_manager(
+        &self,
+    ) -> Arc<Mutex<crate::persistence::TimeseriesPersistenceManager>> {
+        self.pm.clone()
     }
 }

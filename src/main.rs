@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex};
 mod handlers;
 mod persistence;
 mod protocol;
+mod sql;
 mod udpserver;
+#[cfg(test)]
+mod udpserver_test;
 mod utils;
 
 #[actix_rt::main]
@@ -20,9 +23,9 @@ async fn main() -> std::io::Result<()> {
     let db_path = "timeseries.db";
 
     let addr = "127.0.0.1:8089".to_string();
-    let pm = Arc::new(Mutex::new(persistence::TimeseriesPersistenceManager::new(
-        db_path,
-    )));
+    let pm = Arc::new(Mutex::new(
+        persistence::TimeseriesPersistenceManager::new(db_path).unwrap(),
+    ));
     let data = web::Data::new(pm.clone());
 
     let _task = actix_rt::spawn(async move {

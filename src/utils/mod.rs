@@ -1,2 +1,1 @@
-pub mod db;
-pub mod filemanager;
+// Empty file - no modules needed
